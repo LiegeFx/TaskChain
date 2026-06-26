@@ -317,6 +317,7 @@ export default function ProjectDetailPage() {
             
             <div className="flex items-center gap-4">
               {project.client?.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img 
                   src={project.client.avatar_url} 
                   alt={project.client.display_name || project.client.username} 
@@ -366,6 +367,7 @@ export default function ProjectDetailPage() {
               <>
                 <div className="flex items-center gap-4">
                   {project.freelancer.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img 
                       src={project.freelancer.avatar_url} 
                       alt={project.freelancer.display_name || project.freelancer.username} 

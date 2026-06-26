@@ -51,9 +51,11 @@ export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
     if (!isConnected) return;
 
     // Fetch immediately
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchUnreadCount();
 
     // Set up polling
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     const interval = setInterval(fetchUnreadCount, 10000);
     return () => clearInterval(interval);
   }, [isConnected]);
