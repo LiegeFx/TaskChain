@@ -369,6 +369,7 @@ function DisputeResolutionView({ disputeId }: { disputeId: string }) {
                           className="group overflow-hidden rounded-3xl border border-border/50 bg-background"
                         >
                           {file.type.startsWith("image/") ? (
+                            // eslint-disable-next-line @next/next/no-img-element
                             <img
                               src={file.url}
                               alt={file.name}
