@@ -10,10 +10,10 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuth } from '@/lib/auth/middleware'
+import { withAnyRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { escrowService, EscrowError, escrowErrorToHttpStatus } from '@/lib/escrow'
 
-export const POST = withAuth(async (request: NextRequest, auth) => {
+export const POST = withAnyRbac(['escrow:refund', 'admin:contracts_freeze'], async (request: NextRequest, auth: RbacContext) => {
   let body: Record<string, unknown>
   try {
     body = await request.json()
