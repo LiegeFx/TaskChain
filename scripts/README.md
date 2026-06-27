@@ -104,6 +104,8 @@ CONFIRM=true npx tsx scripts/deploy-mainnet.ts
 - `006-contracts.sql` - Escrow contracts table
 - `006-dispute-enhancements.sql` - Dispute enhancements
 - `006-rate-limits.sql` - Rate limiting table
+- `009-reviews-schema.sql` - Reviews table for client/freelancer ratings
+- `010-freelancer-discovery-indexes.sql` - GIN/B-tree indexes that power GET /api/freelancers (task #121)
 
 ### Security Tables
 - `007-fail-safe.sql` - Critical operations table for fail-safe system
