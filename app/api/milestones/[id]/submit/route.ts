@@ -1,19 +1,16 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuth } from '@/lib/auth/middleware'
+import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { sql } from '@/lib/db'
 
 // Only the contract freelancer can submit a milestone (status must be pending or in_progress)
-export const POST = withAuth(async (request: NextRequest, auth) => {
+export const POST = withRbac('milestone:submit', async (request: NextRequest, auth: RbacContext) => {
   const id = request.nextUrl.pathname.split('/').at(-2)
 
   try {
     const body = await request.json().catch(() => ({}))
     const { deliverables } = body
-
-    const [user] = await sql`SELECT id FROM users WHERE wallet_address = ${auth.walletAddress} LIMIT 1`
-    if (!user) return NextResponse.json({ error: 'User not found', code: 'USER_NOT_FOUND' }, { status: 404 })
 
     // Fetch milestone with contract info to verify freelancer role
     const [milestone] = await sql`
@@ -26,7 +23,7 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
     if (!milestone) return NextResponse.json({ error: 'Milestone not found', code: 'MILESTONE_NOT_FOUND' }, { status: 404 })
 
     // Must have a contract and caller must be the freelancer
-    if (!milestone.contract_id || milestone.freelancer_id !== user.id) {
+    if (!milestone.contract_id || milestone.freelancer_id !== auth.userId) {
       return NextResponse.json({ error: 'Access denied', code: 'FORBIDDEN' }, { status: 403 })
     }
 

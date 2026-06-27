@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuth, AuthContext } from './middleware'
-import { sql } from '@/lib/db'
+import { withRole, RbacContext } from './rbacMiddleware'
 
-export interface AdminContext extends AuthContext {
-  userId: string
+export interface AdminContext extends RbacContext {
   role: 'admin'
 }
 
@@ -12,37 +10,19 @@ type AdminHandler = (
   auth: AdminContext
 ) => Promise<NextResponse> | NextResponse
 
+/**
+ * Middleware that restricts access to admin users only.
+ * This is a convenience wrapper around withRole(['admin']).
+ * 
+ * @deprecated Use withRole(['admin']) or withRbac with specific admin permissions instead.
+ * This is maintained for backward compatibility.
+ */
 export function withAdmin(handler: AdminHandler) {
-  return withAuth(async (request: NextRequest, auth: AuthContext): Promise<NextResponse> => {
-    // Fetch user from database by walletAddress to get role and id
-    const result = await sql`
-      SELECT id, role
-      FROM users
-      WHERE wallet_address = ${auth.walletAddress}
-    `
-
-    if (result.length === 0) {
-      return NextResponse.json(
-        { error: 'User not found', code: 'USER_NOT_FOUND' },
-        { status: 404 }
-      )
-    }
-
-    const { id, role } = result[0]
-
-    // Check if the user has admin role
-    if (role !== 'admin') {
-      return NextResponse.json(
-        { error: 'Forbidden', code: 'INSUFFICIENT_PERMISSIONS' },
-        { status: 403 }
-      )
-    }
-
-    // Extend auth context with userId and role
+  return withRole(['admin'], async (request: NextRequest, auth: RbacContext): Promise<NextResponse> => {
+    // Extend auth context with admin-specific type
     const adminAuth: AdminContext = {
       ...auth,
-      userId: id,
-      role: 'admin'
+      role: 'admin' as const
     }
 
     return handler(request, adminAuth)

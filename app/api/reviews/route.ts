@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { sql } from "@/lib/db";
+import { withRbac, RbacContext } from "@/lib/auth/rbacMiddleware";
 
 const reviewSchema = z.object({
   contractId: z.number().int().positive(),
@@ -10,7 +11,7 @@ const reviewSchema = z.object({
   comment: z.string().optional(),
 });
 
-export async function POST(req: Request) {
+export const POST = withRbac('reviews:create', async (req: Request, auth: RbacContext) => {
   try {
     const body = await req.json();
     
@@ -23,7 +24,7 @@ export async function POST(req: Request) {
       );
     }
     
-    const { contractId, reviewerId, freelancerId, rating, comment } = result.data;
+    const { contractId, freelancerId, rating, comment } = result.data;
 
     // Check if contract exists and get its status
     const contractResult = (await sql`
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
     // Insert the review
     const insertResult = (await sql`
       INSERT INTO reviews (contract_id, reviewer_id, freelancer_id, rating, comment, verified)
-      VALUES (${contractId}, ${reviewerId}, ${freelancerId}, ${rating}, ${comment || null}, ${verified})
+      VALUES (${contractId}, ${auth.userId}, ${freelancerId}, ${rating}, ${comment || null}, ${verified})
       RETURNING *
     `) as any[];
 
@@ -66,4 +67,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-}
+});

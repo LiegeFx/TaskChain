@@ -1,11 +1,11 @@
 export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuth } from '@/lib/auth/middleware'
+import { withAnyRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { sql } from '@/lib/db'
 
 // Only the contract client can approve (or reject) a submitted milestone
-export const POST = withAuth(async (request: NextRequest, auth) => {
+export const POST = withAnyRbac(['milestone:approve', 'milestone:reject'], async (request: NextRequest, auth: RbacContext) => {
   const id = request.nextUrl.pathname.split('/').at(-2)
 
   try {
@@ -26,9 +26,6 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
       )
     }
 
-    const [user] = await sql`SELECT id FROM users WHERE wallet_address = ${auth.walletAddress} LIMIT 1`
-    if (!user) return NextResponse.json({ error: 'User not found', code: 'USER_NOT_FOUND' }, { status: 404 })
-
     // Fetch milestone with contract info to verify client role
     const [milestone] = await sql`
       SELECT m.*, c.client_id
@@ -39,7 +36,7 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
     `
     if (!milestone) return NextResponse.json({ error: 'Milestone not found', code: 'MILESTONE_NOT_FOUND' }, { status: 404 })
 
-    if (!milestone.contract_id || milestone.client_id !== user.id) {
+    if (!milestone.contract_id || milestone.client_id !== auth.userId) {
       return NextResponse.json({ error: 'Access denied', code: 'FORBIDDEN' }, { status: 403 })
     }
 
