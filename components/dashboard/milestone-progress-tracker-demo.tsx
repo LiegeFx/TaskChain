@@ -187,8 +187,8 @@ export function MyComponent() {
             <p className="text-muted-foreground">Array of milestone data to display</p>
           </div>
           <div>
-            <p className="font-semibold">variant?: 'stepper' | 'cards' | 'timeline'</p>
-            <p className="text-muted-foreground">Display variant (default: 'stepper')</p>
+            <p className="font-semibold">variant?: &apos;stepper&apos; | &apos;cards&apos; | &apos;timeline&apos;</p>
+            <p className="text-muted-foreground">Display variant (default: &apos;stepper&apos;)</p>
           </div>
           <div>
             <p className="font-semibold">showProgress?: boolean</p>
@@ -199,7 +199,7 @@ export function MyComponent() {
             <p className="text-muted-foreground">Compact display mode (default: false)</p>
           </div>
           <div>
-            <p className="font-semibold">onMilestoneClick?: (milestone) => void</p>
+            <p className="font-semibold">onMilestoneClick?: (milestone) =&gt; void</p>
             <p className="text-muted-foreground">Callback when a milestone is clicked</p>
           </div>
         </div>
