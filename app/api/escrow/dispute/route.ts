@@ -23,6 +23,7 @@ import {
   escrowErrorToHttpStatus,
   type DisputeRaisedBy,
 } from '@/lib/escrow'
+import { dispatchNotification } from '@/lib/notifications'
 
 export const POST = withAuth(async (request: NextRequest, auth) => {
   let body: Record<string, unknown>
@@ -62,6 +63,19 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
       evidence: body.evidence as Array<{ type: string; url: string; label?: string }> | undefined,
       responseDeadline: body.responseDeadline as string | undefined,
     })
+
+    // Notify every contract party except whoever raised the dispute
+    const parties = [result.contract.clientId, result.contract.freelancerId]
+      .filter((id) => id !== userId)
+    await Promise.all(
+      parties.map((partyId) =>
+        dispatchNotification(partyId, 'dispute_raised', {
+          disputeId: result.dispute.id,
+          contractId: result.contract.id,
+          reason: result.dispute.reason,
+        })
+      )
+    )
 
     return NextResponse.json(
       {
