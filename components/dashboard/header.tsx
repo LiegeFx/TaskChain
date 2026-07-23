@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { Menu, Bell, LogOut, User, AlertTriangle } from "lucide-react";
+import { GlobalSearchBar } from "@/components/global-search-bar";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -86,7 +87,9 @@ export function DashboardHeader({ onMenuClick }: DashboardHeaderProps) {
           <Menu className="h-6 w-6" />
         </Button>
 
-        <div className="flex-1" />
+        <div className="flex-1 flex items-center px-4">
+          <GlobalSearchBar />
+        </div>
 
         <div className="flex items-center gap-3 relative">
           {/* Wrong-network pill — compact inline warning in the header */}

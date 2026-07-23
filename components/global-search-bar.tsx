@@ -87,9 +87,6 @@ export function GlobalSearchBar() {
     })
   }, [showDropdown, query])
 
-  // Reset active index when results change
-  useEffect(() => { setActiveIndex(-1) }, [results])
-
   // Close on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -211,7 +208,11 @@ export function GlobalSearchBar() {
           aria-autocomplete="list"
           aria-activedescendant={activeIndex >= 0 ? `result-${activeIndex}` : undefined}
           value={query}
-          onChange={e => { setQuery(e.target.value); setIsOpen(true) }}
+          onChange={e => {
+            setActiveIndex(-1)
+            setQuery(e.target.value)
+            setIsOpen(true)
+          }}
           onFocus={() => setIsOpen(true)}
           onKeyDown={handleKeyDown}
           className="pl-9 pr-8 h-9 text-sm"
