@@ -132,6 +132,7 @@ export function GlobalSearchBar() {
   const dropdown = showDropdown ? (
     <div
       style={dropdownStyle}
+      id="global-search-listbox"
       role="listbox"
       aria-label="Search results"
       className="rounded-xl border border-border/60 bg-background shadow-xl ring-1 ring-black/5 overflow-hidden"
@@ -163,7 +164,12 @@ export function GlobalSearchBar() {
       {!isLoading && hasResults && (
         <ul>
           {allResults.map((result, idx) => (
-            <li key={`${result.type}-${result.id}`} role="option" aria-selected={idx === activeIndex}>
+            <li
+              key={`${result.type}-${result.id}`}
+              id={`result-${idx}`}
+              role="option"
+              aria-selected={idx === activeIndex}
+            >
               <Link
                 href={resultHref(result)}
                 onClick={() => { setIsOpen(false) }}
