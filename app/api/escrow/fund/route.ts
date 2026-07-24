@@ -12,7 +12,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
+import { sql } from '@/lib/db'
 import { escrowService, EscrowError, escrowErrorToHttpStatus } from '@/lib/escrow'
+import { activityService } from '@/lib/activity'
 
 export const POST = withRbac('escrow:fund', async (request: NextRequest, auth: RbacContext) => {
   let body: Record<string, unknown>
@@ -32,6 +34,18 @@ export const POST = withRbac('escrow:fund', async (request: NextRequest, auth: R
       fundingTxHash: body.fundingTxHash as string,
       amount: body.amount as string,
     })
+
+    activityService.log({
+      actorId: auth.userId,
+      contractId: result.contract.id,
+      actionType: 'escrow_funded',
+      description: `Escrow funded with ${body.amount} for contract ${result.contract.id}`,
+      metadata: {
+        amount: body.amount,
+        fundingTxHash: body.fundingTxHash,
+        escrowStatus: result.contract.escrowStatus,
+      },
+    }).catch((err: unknown) => console.error('[activity] Failed to log escrow_funded:', err))
 
     return NextResponse.json({
       contractId: result.contract.id,

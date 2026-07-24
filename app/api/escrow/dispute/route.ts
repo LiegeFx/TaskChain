@@ -23,6 +23,7 @@ import {
   escrowErrorToHttpStatus,
   type DisputeRaisedBy,
 } from '@/lib/escrow'
+import { activityService } from '@/lib/activity'
 
 export const POST = withAuth(async (request: NextRequest, auth) => {
   let body: Record<string, unknown>
@@ -62,6 +63,20 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
       evidence: body.evidence as Array<{ type: string; url: string; label?: string }> | undefined,
       responseDeadline: body.responseDeadline as string | undefined,
     })
+
+    activityService.log({
+      actorId: userId,
+      contractId: result.contract.id,
+      disputeId: result.dispute.id,
+      milestoneId: result.dispute.milestoneId ?? undefined,
+      actionType: 'dispute_created',
+      description: `Dispute raised by ${raisedBy}: "${body.reason}"`,
+      metadata: {
+        raisedBy,
+        reason: body.reason,
+        desiredOutcome: body.desiredOutcome ?? null,
+      },
+    }).catch((err: unknown) => console.error('[activity] Failed to log dispute_created:', err))
 
     return NextResponse.json(
       {

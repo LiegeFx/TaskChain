@@ -2,7 +2,9 @@ export const dynamic = 'force-dynamic'
 
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/auth/middleware'
+import { sql } from '@/lib/db'
 import { deploySorobanEscrow, SorobanDeployError } from '@/lib/soroban/deploy'
+import { activityService } from '@/lib/activity'
 import {
   createContract,
   createMilestones,
@@ -162,6 +164,24 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
   } catch (err) {
     console.error('[contracts/deploy] DB persistence error:', err)
     return NextResponse.json({ error: 'Failed to persist contract data', code: 'DB_ERROR' }, { status: 500 })
+  }
+
+  const users = await sql`SELECT id FROM users WHERE wallet_address = ${auth.walletAddress} LIMIT 1`
+  const actorId = users[0]?.id as string | undefined
+  if (actorId) {
+    activityService.log({
+      actorId,
+      contractId: String(contract.id),
+      projectId: String(job.id),
+      actionType: 'contract_created',
+      description: `Contract created for project "${job.title}" with freelancer ${freelancer.wallet_address}`,
+      metadata: {
+        totalAmount: body.totalAmount,
+        currency,
+        milestonesCount: milestones.length,
+        freelancerId: body.freelancerId,
+      },
+    }).catch((err: unknown) => console.error('[activity] Failed to log contract_created:', err))
   }
 
   return NextResponse.json(
