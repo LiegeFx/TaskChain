@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAnyRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { escrowService, EscrowError, escrowErrorToHttpStatus } from '@/lib/escrow'
+import { dispatchNotification } from '@/lib/notifications'
 
 export const POST = withAnyRbac(['escrow:refund', 'admin:contracts_freeze'], async (request: NextRequest, auth: RbacContext) => {
   let body: Record<string, unknown>
@@ -30,6 +31,21 @@ export const POST = withAnyRbac(['escrow:refund', 'admin:contracts_freeze'], asy
       callerWalletAddress: auth.walletAddress,
       reason: body.reason as string,
     })
+
+    const amount = `${result.contract.totalAmount} ${result.contract.currency}`
+    await Promise.all([
+      dispatchNotification(result.contract.clientId, 'wallet_activity', {
+        contractId: result.contract.id,
+        description: 'Escrow funds were refunded to your wallet',
+        amount,
+        txHash: result.refundTxHash,
+      }),
+      dispatchNotification(result.contract.freelancerId, 'escrow_refunded', {
+        contractId: result.contract.id,
+        amount,
+        txHash: result.refundTxHash,
+      }),
+    ])
 
     return NextResponse.json({
       contractId: result.contract.id,

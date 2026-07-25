@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { sql } from '@/lib/db'
+import { dispatchNotification } from '@/lib/notifications'
 
 // Only the contract freelancer can submit a milestone (status must be pending or in_progress)
 export const POST = withRbac('milestone:submit', async (request: NextRequest, auth: RbacContext) => {
@@ -14,7 +15,7 @@ export const POST = withRbac('milestone:submit', async (request: NextRequest, au
 
     // Fetch milestone with contract info to verify freelancer role
     const [milestone] = await sql`
-      SELECT m.*, c.freelancer_id
+      SELECT m.*, c.freelancer_id, c.client_id
       FROM milestones m
       LEFT JOIN contracts c ON c.id = m.contract_id
       WHERE m.id = ${id}
@@ -44,6 +45,12 @@ export const POST = withRbac('milestone:submit', async (request: NextRequest, au
       WHERE id = ${id}
       RETURNING *
     `
+
+    await dispatchNotification(milestone.client_id, 'milestone_submitted', {
+      milestoneId: updated.id,
+      milestoneName: updated.title,
+      contractId: milestone.contract_id,
+    })
 
     return NextResponse.json({ milestone: updated })
   } catch {
