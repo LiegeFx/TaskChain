@@ -53,7 +53,7 @@ Both sweeps are idempotent by design: re-running `runCheck()` on a schedule only
 
 Reminder and overdue events reuse the existing `notifications` table and API rather than introducing a parallel event log — `milestone_deadline_approaching` and `milestone_overdue` were added to `NotificationType`. This means they automatically get pagination, read/unread state, and UI rendering (`components/dashboard/notification-item.tsx`) for free.
 
-### 4. Database changes (`lib/db/migrations/007_deadline_monitor.sql`)
+### 4. Database changes (`lib/db/migrations/008_deadline_monitor.sql`)
 
 ```sql
 ALTER TABLE milestones

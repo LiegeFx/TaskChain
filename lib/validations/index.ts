@@ -143,6 +143,44 @@ export const UpdateMilestoneSchema = z.object({
   deliverables: z.array(z.string().trim().min(1)).optional(),
 })
 
+// ─── File Upload / Deliverables ───────────────────────────────────────────────
+
+export const ALLOWED_DELIVERABLE_MIME_TYPES = [
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/zip',
+  'application/gzip',
+  'application/x-tar',
+  'text/plain',
+  'text/csv',
+  'application/json',
+] as const
+
+export const MAX_DELIVERABLE_FILE_SIZE = 50 * 1024 * 1024 // 50 MB
+export const MAX_DELIVERABLE_FILES_PER_BATCH = 10
+
+export const DeliverableMetadataSchema = z.object({
+  id: z.string().uuid(),
+  milestone_id: z.string().uuid(),
+  uploader_id: z.string().uuid(),
+  original_filename: z.string().min(1).max(255),
+  mime_type: z.string().min(1).max(127),
+  file_size: z.number().int().positive(),
+  file_hash: z.string().min(1),
+  created_at: z.string().datetime(),
+})
+
+export type DeliverableMetadata = z.infer<typeof DeliverableMetadataSchema>
+
 export type CreateMilestoneInput = z.infer<typeof CreateMilestoneSchema>
 export type UpdateMilestoneInput = z.infer<typeof UpdateMilestoneSchema>
 export type CreateProjectInput = z.infer<typeof CreateProjectSchema>
