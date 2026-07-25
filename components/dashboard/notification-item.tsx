@@ -31,6 +31,14 @@ const NOTIFICATION_CONFIG: Record<
     description: (payload: Record<string, unknown>) => string;
   }
 > = {
+  milestone_submitted: {
+    icon: ">",
+    color:
+      "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300",
+    label: "Milestone Submitted",
+    description: (payload) =>
+      `Milestone "${(payload.milestoneName as string) || "Unnamed"}" was submitted for review`,
+  },
   milestone_approved: {
     icon: "✓",
     color:
@@ -69,6 +77,21 @@ const NOTIFICATION_CONFIG: Record<
     description: (payload) =>
       `Escrow has been funded with ${(payload.amount as string) || "funds"}`,
   },
+  escrow_refunded: {
+    icon: "<",
+    color:
+      "bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300",
+    label: "Escrow Refunded",
+    description: (payload) =>
+      `Escrow funds of ${(payload.amount as string) || "the contract"} were refunded to the client`,
+  },
+  payment_received: {
+    icon: "$",
+    color: "bg-teal-100 dark:bg-teal-900/30 text-teal-700 dark:text-teal-300",
+    label: "Payment Received",
+    description: (payload) =>
+      `You received ${(payload.amount as string) || "a payment"} for milestone "${(payload.milestoneName as string) || "Unnamed"}"`,
+  },
   payment_released: {
     icon: "✓",
     color:
@@ -91,6 +114,15 @@ const NOTIFICATION_CONFIG: Record<
     label: "Milestone Overdue",
     description: (payload) =>
       `Milestone "${(payload.milestoneName as string) || "Unnamed"}" has passed its due date`,
+  },
+  wallet_activity: {
+    icon: "$",
+    color: "bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300",
+    label: "Wallet Activity",
+    description: (payload) =>
+      `${(payload.description as string) || "There was activity on your wallet"}${
+        payload.amount ? ` (${payload.amount as string})` : ""
+      }`,
   },
 };
 
