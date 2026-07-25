@@ -17,6 +17,7 @@ export type NotificationType =
   | "milestone_submitted"
   | "funds_released"
   | "contract_created"
+  | "contract_state_changed"
   | "dispute_raised"
   | "escrow_funded"
   | "escrow_refunded"
@@ -245,6 +246,10 @@ const CONTENT_BUILDERS: Record<
   contract_created: (p) => ({
     title: "Contract created",
     body: `New contract "${str(p, "contractName") ?? "Untitled"}" created.`,
+  }),
+  contract_state_changed: (p) => ({
+    title: "Contract status updated",
+    body: `Contract "${str(p, "contractName") ?? "Untitled"}" is now ${str(p, "newStatus") ?? "updated"}.`,
   }),
   dispute_raised: (p) => ({
     title: "Dispute opened",
