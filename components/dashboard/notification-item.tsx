@@ -77,6 +77,21 @@ const NOTIFICATION_CONFIG: Record<
     description: (payload) =>
       `Payment of ${(payload.amount as string) || "funds"} has been released`,
   },
+  milestone_deadline_approaching: {
+    icon: "⏰",
+    color:
+      "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300",
+    label: "Deadline Approaching",
+    description: (payload) =>
+      `Milestone "${(payload.milestoneName as string) || "Unnamed"}" is due soon`,
+  },
+  milestone_overdue: {
+    icon: "⏱️",
+    color: "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300",
+    label: "Milestone Overdue",
+    description: (payload) =>
+      `Milestone "${(payload.milestoneName as string) || "Unnamed"}" has passed its due date`,
+  },
 };
 
 interface NotificationItemProps {

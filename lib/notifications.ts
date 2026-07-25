@@ -19,7 +19,9 @@ export type NotificationType =
   | "escrow_funded"
   | "escrow_refunded"
   | "payment_released"
-  | "payment_received";
+  | "payment_received"
+  | "milestone_deadline_approaching"
+  | "milestone_overdue";
 
 export interface Notification {
   id: string;
