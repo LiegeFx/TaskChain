@@ -9,6 +9,7 @@ import {
   LogOut,
   ChevronRight,
   UserCircle,
+  Settings,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -38,6 +39,11 @@ const navItems = [
     label: 'Profile',
     href: '/dashboard/profile',
     icon: UserCircle,
+  },
+  {
+    label: 'Settings',
+    href: '/settings',
+    icon: Settings,
   },
 ]
 
