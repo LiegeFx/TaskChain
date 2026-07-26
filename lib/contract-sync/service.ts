@@ -2,7 +2,8 @@ import { sql } from '@/lib/db'
 import { SorobanEventListener } from './listener'
 import { SyncQueue } from './queue'
 import { mapEventToAction } from './mapper'
-import type { SorobanEventPayload, ContractSyncLog, SyncStatus, SorobanContractEvent } from './types'
+import { buildSyncDedupeKey } from './types'
+import type { SorobanEventPayload, SyncStatus, SorobanContractEvent } from './types'
 
 export interface SyncServiceOptions {
   rpcUrl?: string
@@ -22,6 +23,20 @@ export class ContractSyncService {
     this.queue = new SyncQueue({
       maxRetries: options.maxRetries,
       concurrency: options.queueConcurrency,
+      onRetry: (item, error) => {
+        this.updateSyncLog(item.id, {
+          status: 'failed',
+          errorMessage: error,
+          retryCount: item.retryCount,
+        }).catch((err) => console.error('[ContractSyncService] Failed to persist retry status:', err))
+      },
+      onDeadLetter: (item) => {
+        this.updateSyncLog(item.id, {
+          status: 'dead_letter',
+          errorMessage: item.lastError ?? undefined,
+          retryCount: item.retryCount,
+        }).catch((err) => console.error('[ContractSyncService] Failed to persist dead-letter status:', err))
+      },
     })
 
     this.listener = new SorobanEventListener({
@@ -29,6 +44,11 @@ export class ContractSyncService {
       networkPassphrase: options.networkPassphrase ?? process.env.STELLAR_NETWORK_PASSPHRASE ?? 'Test SDF Network ; September 2015',
       contractAddresses: options.contractAddresses ?? [],
       pollIntervalMs: options.pollIntervalMs,
+      onCheckpoint: (ledgerSequence) => {
+        this.persistCheckpoint(ledgerSequence).catch((err) =>
+          console.error('[ContractSyncService] Failed to persist sync checkpoint:', err)
+        )
+      },
     })
 
     this.listener.setCallback((payload) => this.onEvent(payload))
@@ -38,6 +58,11 @@ export class ContractSyncService {
   async start(): Promise<void> {
     if (this.started) return
     this.started = true
+
+    const checkpoint = await this.loadCheckpoint()
+    if (checkpoint != null) {
+      this.listener.setInitialLedger(checkpoint)
+    }
 
     this.queue.start()
     await this.listener.start()
@@ -61,16 +86,55 @@ export class ContractSyncService {
   }
 
   private async onEvent(payload: SorobanEventPayload): Promise<void> {
+    const dedupeKey = buildSyncDedupeKey(payload)
+
+    // Guards against reprocessing an event that was already synced in a
+    // previous process lifetime (the in-memory queue only dedupes within a
+    // single run — this check survives restarts).
+    if (await this.isAlreadySynced(dedupeKey)) {
+      console.log(`[ContractSyncService] Skipping already-synced event (dedupe_key=${dedupeKey})`)
+      return
+    }
+
     const id = this.queue.enqueue(payload)
     console.log(`[ContractSyncService] Enqueued event: ${payload.event} @ ${payload.contractAddress} (id=${id})`)
 
     await this.createSyncLog({
+      dedupeKey,
       eventType: payload.event,
       txHash: payload.txHash,
       ledgerSequence: payload.ledgerSequence,
       status: 'pending',
       rawPayload: payload as unknown as Record<string, unknown>,
     })
+  }
+
+  private async isAlreadySynced(dedupeKey: string): Promise<boolean> {
+    const rows = (await sql`
+      SELECT 1 FROM contract_sync_log
+       WHERE dedupe_key = ${dedupeKey}
+         AND status = 'success'
+       LIMIT 1
+    `) as unknown[]
+    return rows.length > 0
+  }
+
+  private async loadCheckpoint(): Promise<number | null> {
+    const rows = (await sql`
+      SELECT last_ledger FROM contract_sync_checkpoint WHERE id = 1
+    `) as { last_ledger: number | string }[]
+    if (rows.length === 0) return null
+    return Number(rows[0].last_ledger)
+  }
+
+  private async persistCheckpoint(ledgerSequence: number): Promise<void> {
+    await sql`
+      INSERT INTO contract_sync_checkpoint (id, last_ledger)
+      VALUES (1, ${ledgerSequence})
+      ON CONFLICT (id) DO UPDATE
+        SET last_ledger = ${ledgerSequence},
+            updated_at = NOW()
+    `
   }
 
   private async processSync(item: { id: string; payload: SorobanEventPayload }): Promise<void> {
@@ -199,6 +263,7 @@ export class ContractSyncService {
   }
 
   private async createSyncLog(params: {
+    dedupeKey: string
     eventType: SorobanContractEvent
     txHash: string
     ledgerSequence: number
@@ -207,6 +272,7 @@ export class ContractSyncService {
   }): Promise<void> {
     await sql`
       INSERT INTO contract_sync_log (
+        dedupe_key,
         event_type,
         tx_hash,
         ledger_sequence,
@@ -214,28 +280,31 @@ export class ContractSyncService {
         raw_payload
       )
       VALUES (
+        ${params.dedupeKey},
         ${params.eventType}::contract_sync_event_type,
         ${params.txHash},
         ${params.ledgerSequence},
         ${params.status}::sync_status,
         ${JSON.stringify(params.rawPayload)}::jsonb
       )
+      ON CONFLICT (dedupe_key) DO NOTHING
     `
   }
 
+  // Note: `itemId`/`dedupeKey` are the same value — the queue's item id is
+  // built from `buildSyncDedupeKey`, which is also stored as the audit row's
+  // dedupe_key, so both sides can be reconciled without any lookup.
   private async updateSyncLog(
-    itemId: string,
-    params: { status: SyncStatus; errorMessage?: string }
+    dedupeKey: string,
+    params: { status: SyncStatus; errorMessage?: string; retryCount?: number }
   ): Promise<void> {
-    const [txHash] = itemId.split(':')
     await sql`
       UPDATE contract_sync_log
          SET status = ${params.status}::sync_status,
              error_message = COALESCE(${params.errorMessage ?? null}, error_message),
-             retry_count = retry_count + 1,
+             retry_count = COALESCE(${params.retryCount ?? null}, retry_count),
              updated_at = NOW()
-       WHERE tx_hash = ${txHash}
-         AND status = 'pending'
+       WHERE dedupe_key = ${dedupeKey}
     `
   }
 

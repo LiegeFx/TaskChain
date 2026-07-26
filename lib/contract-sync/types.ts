@@ -56,4 +56,16 @@ export function getBackoffDelay(retryCount: number): number {
   return Math.min(1000 * Math.pow(2, retryCount), 60_000)
 }
 
+/**
+ * Stable identity for a single on-chain event, shared by the in-memory queue
+ * and the `contract_sync_log` audit table. Used to guarantee at-most-once
+ * processing even across process restarts (the queue alone only dedupes
+ * while an item is in memory).
+ */
+export function buildSyncDedupeKey(
+  payload: Pick<SorobanEventPayload, 'txHash' | 'event' | 'milestoneId'>
+): string {
+  return `${payload.txHash}:${payload.event}:${payload.milestoneId ?? 0}`
+}
+
 export const ESCROW_EVENT_TOPIC_PREFIX = 'escrow_event'

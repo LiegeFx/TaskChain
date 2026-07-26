@@ -1,12 +1,18 @@
 import type { SorobanEventPayload, SyncQueueItem, SyncStatus } from './types'
-import { getDefaultMaxRetries, getBackoffDelay } from './types'
+import { getDefaultMaxRetries, getBackoffDelay, buildSyncDedupeKey } from './types'
 
 export type QueueHandler = (item: SyncQueueItem) => Promise<void>
+export type QueueRetryHandler = (item: SyncQueueItem, error: string) => void
+export type QueueDeadLetterHandler = (item: SyncQueueItem) => void
 
 export interface SyncQueueOptions {
   maxRetries?: number
   concurrency?: number
   pollIntervalMs?: number
+  /** Called every time an item fails but will still be retried. */
+  onRetry?: QueueRetryHandler
+  /** Called once an item exhausts all retries and is moved to the dead letter queue. */
+  onDeadLetter?: QueueDeadLetterHandler
 }
 
 export class SyncQueue {
@@ -17,16 +23,20 @@ export class SyncQueue {
   private readonly maxRetries: number
   private readonly concurrency: number
   private readonly pollIntervalMs: number
+  private readonly onRetry: QueueRetryHandler | null
+  private readonly onDeadLetter: QueueDeadLetterHandler | null
   private deadLetters: SyncQueueItem[] = []
 
   constructor(options: SyncQueueOptions = {}) {
     this.maxRetries = options.maxRetries ?? getDefaultMaxRetries()
     this.concurrency = options.concurrency ?? 3
     this.pollIntervalMs = options.pollIntervalMs ?? 1_000
+    this.onRetry = options.onRetry ?? null
+    this.onDeadLetter = options.onDeadLetter ?? null
   }
 
   enqueue(payload: SorobanEventPayload): string {
-    const id = `${payload.txHash}:${payload.event}:${payload.milestoneId ?? 0}`
+    const id = buildSyncDedupeKey(payload)
     if (this.items.has(id)) return id
 
     const item: SyncQueueItem = {
@@ -124,9 +134,11 @@ export class SyncQueue {
         item.status = 'dead_letter'
         this.deadLetters.push({ ...item })
         this.items.delete(item.id)
+        this.onDeadLetter?.({ ...item })
       } else {
         item.status = 'pending'
         item.nextRetryAt = Date.now() + getBackoffDelay(item.retryCount)
+        this.onRetry?.({ ...item }, message)
       }
     } finally {
       this.processing.delete(item.id)
