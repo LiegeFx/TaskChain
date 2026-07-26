@@ -23,6 +23,8 @@ export type NotificationType =
   | "escrow_refunded"
   | "payment_released"
   | "payment_received"
+  | "milestone_deadline_approaching"
+  | "milestone_overdue"
   | "wallet_activity";
 
 export interface Notification {
@@ -262,6 +264,14 @@ const CONTENT_BUILDERS: Record<
   escrow_refunded: (p) => ({
     title: "Escrow refunded",
     body: `Escrow funds of ${str(p, "amount") ?? "the contract"} were refunded to the client.`,
+  }),
+  milestone_deadline_approaching: (p) => ({
+    title: "Deadline approaching",
+    body: `Milestone "${str(p, "milestoneName") ?? "Unnamed"}" is due soon.`,
+  }),
+  milestone_overdue: (p) => ({
+    title: "Milestone overdue",
+    body: `Milestone "${str(p, "milestoneName") ?? "Unnamed"}" has passed its due date.`,
   }),
   wallet_activity: (p) => ({
     title: "Wallet activity",
