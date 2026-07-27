@@ -14,7 +14,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { sql } from '@/lib/db'
 import { escrowService, EscrowError, escrowErrorToHttpStatus } from '@/lib/escrow'
-import { activityService } from '@/lib/activity'
+import { dispatchNotification } from '@/lib/notifications'
 
 export const POST = withRbac('escrow:fund', async (request: NextRequest, auth: RbacContext) => {
   let body: Record<string, unknown>
@@ -35,17 +35,20 @@ export const POST = withRbac('escrow:fund', async (request: NextRequest, auth: R
       amount: body.amount as string,
     })
 
-    activityService.log({
-      actorId: auth.userId,
-      contractId: result.contract.id,
-      actionType: 'escrow_funded',
-      description: `Escrow funded with ${body.amount} for contract ${result.contract.id}`,
-      metadata: {
-        amount: body.amount,
-        fundingTxHash: body.fundingTxHash,
-        escrowStatus: result.contract.escrowStatus,
-      },
-    }).catch((err: unknown) => console.error('[activity] Failed to log escrow_funded:', err))
+    const amount = `${body.amount} ${result.contract.currency}`
+    await Promise.all([
+      dispatchNotification(result.contract.clientId, 'wallet_activity', {
+        contractId: result.contract.id,
+        description: 'Your wallet funded the escrow contract',
+        amount,
+        txHash: result.contract.fundingTxHash,
+      }),
+      dispatchNotification(result.contract.freelancerId, 'escrow_funded', {
+        contractId: result.contract.id,
+        amount,
+        txHash: result.contract.fundingTxHash,
+      }),
+    ])
 
     return NextResponse.json({
       contractId: result.contract.id,

@@ -12,7 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { escrowService, EscrowError, escrowErrorToHttpStatus } from '@/lib/escrow'
-import { activityService } from '@/lib/activity'
+import { dispatchNotification } from '@/lib/notifications'
 
 export const POST = withRbac('escrow:release', async (request: NextRequest, auth: RbacContext) => {
   let body: Record<string, unknown>
@@ -32,20 +32,23 @@ export const POST = withRbac('escrow:release', async (request: NextRequest, auth
       callerWalletAddress: auth.walletAddress,
     })
 
-    activityService.log({
-      actorId: auth.userId,
-      contractId: result.contract.id,
-      milestoneId: result.milestone.id,
-      actionType: 'payment_released',
-      description: `Payment of ${result.milestone.amount} released for milestone "${result.milestone.title}"`,
-      metadata: {
-        amount: result.milestone.amount,
-        currency: result.milestone.currency,
-        releaseTxHash: result.releaseTxHash,
-        milestoneStatus: result.milestone.status,
-        allMilestonesPaid: result.allMilestonesPaid,
-      },
-    }).catch((err: unknown) => console.error('[activity] Failed to log payment_released:', err))
+    const amount = `${result.milestone.amount} ${result.milestone.currency}`
+    await Promise.all([
+      dispatchNotification(result.contract.clientId, 'funds_released', {
+        contractId: result.contract.id,
+        milestoneId: result.milestone.id,
+        milestoneName: result.milestone.title,
+        amount,
+        txHash: result.releaseTxHash,
+      }),
+      dispatchNotification(result.contract.freelancerId, 'payment_received', {
+        contractId: result.contract.id,
+        milestoneId: result.milestone.id,
+        milestoneName: result.milestone.title,
+        amount,
+        txHash: result.releaseTxHash,
+      }),
+    ])
 
     return NextResponse.json({
       milestoneId: result.milestone.id,

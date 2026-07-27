@@ -75,15 +75,17 @@ In-memory queue that processes events with:
 - **Configurable concurrency** (default: 3)
 - **Exponential backoff**: `min(1000 * 2^retry, 60000)` ms
 - **Dead letter** after 5 failed retries
-- Thread-safe item tracking by `txHash:event:milestoneId`
+- Thread-safe item tracking by `txHash:event:milestoneId` (see `buildSyncDedupeKey` in `types.ts`)
+- `onRetry` / `onDeadLetter` hooks so every retry and terminal failure is mirrored into `contract_sync_log` — not just successes
 
 ### 4. Soroban Event Listener (`lib/contract-sync/listener.ts`)
 
 Polls the Soroban RPC endpoint for contract events:
 - Uses `@stellar/stellar-sdk` `SorobanRpc.Server.getEvents()`
-- Tracks the latest processed ledger to avoid re-processing
 - Configurable poll interval (default: 10s)
 - Parses Soroban event topics and data into typed payloads
+- Resumes from a persisted ledger checkpoint on restart (`initialLedger` / `setInitialLedger`) instead of jumping to the chain tip, so events emitted during downtime are still picked up
+- The checkpoint only advances once the event callback for a batch has resolved (`onCheckpoint` fires after the awaited callback), so a crash mid-processing can't advance past an event that was never durably logged
 
 ### 5. Sync Service (`lib/contract-sync/service.ts`)
 
@@ -110,10 +112,20 @@ contract_sync_log (
   error_message     TEXT,
   retry_count       INTEGER DEFAULT 0,
   raw_payload       JSONB,
+  dedupe_key        TEXT,                      -- unique per event; see Durability section
   created_at        TIMESTAMPTZ,
   updated_at        TIMESTAMPTZ
 )
 ```
+
+## Durability & Restart Behavior
+
+Two mechanisms guarantee "exactly once" processing and a complete audit trail across process restarts, not just within a single run (added in `lib/db/migrations/007_contract_sync_durability.sql`):
+
+1. **`dedupe_key` + unique index on `contract_sync_log`** — every event's identity (`txHash:event:milestoneId`) is checked against the audit log *before* enqueueing. If a row already exists with `status = 'success'`, the event is skipped entirely. The insert itself also uses `ON CONFLICT (dedupe_key) DO NOTHING` as a race-safety net. This prevents duplicate DB writes (and duplicate audit rows) if the same event is redelivered after a restart, when the in-memory queue has been wiped.
+2. **`contract_sync_checkpoint` table** — a single-row table storing the last ledger sequence the listener has fully processed. `ContractSyncService.start()` loads it and seeds the listener via `setInitialLedger()`, so polling resumes from where it left off instead of starting from the chain's current tip (which would silently skip any events emitted while the service was down).
+
+Combined, these mean: on restart, events from the downtime window are re-fetched (via the checkpoint) and safely deduplicated against `contract_sync_log` (via `dedupe_key`) rather than either being dropped or double-processed.
 
 ## Running the Sync Worker
 
@@ -127,10 +139,11 @@ contract_sync_log (
    SOROBAN_CONTRACT_ADDRESSES=CA...ID1,CA...ID2
    ```
 
-2. Database migration applied:
+2. Database migrations applied:
    ```bash
-   # Run the SQL migration in your Neon console
-   lib/db/migrations/005_contract_sync_log.sql
+   npm run migrate
+   # applies lib/db/migrations/005_contract_sync_log.sql and
+   # lib/db/migrations/007_contract_sync_durability.sql, among others
    ```
 
 ### Start the Worker
@@ -180,10 +193,10 @@ const deadLetters = syncService.getQueue().getDeadLetters()
 
 ## Error Handling
 
-- **Transient errors** (network issues, RPC timeouts): Retried with exponential backoff
-- **Permanent errors** (contract not found, invalid event data): Move to dead letter after max retries
+- **Transient errors** (network issues, RPC timeouts): Retried with exponential backoff; each retry updates `contract_sync_log` to `status = 'failed'` with the error message and current retry count via the queue's `onRetry` hook
+- **Permanent errors** (contract not found, invalid event data): Move to dead letter after max retries; the queue's `onDeadLetter` hook records the final `status = 'dead_letter'` row
 - **DB constraint violations**: Logged and moved to dead letter (require manual intervention)
-- **All failures** are recorded in `contract_sync_log` with the error message and retry count
+- **All failures** — not just successes — are recorded in `contract_sync_log` with the error message and retry count
 
 ## Testing
 
@@ -193,10 +206,12 @@ npm test -- --reporter=verbose
 
 Unit tests cover:
 - Event mapping correctness for all 10 event types
-- Queue enqueue/dequeue/retry/dead letter logic
+- Queue enqueue/dequeue/retry/dead letter logic, including `onRetry`/`onDeadLetter` hooks
 - Backoff delay calculation
 - Soroban event parsing
 - DB update generation
+- Listener checkpoint resumption (`initialLedger`, `setInitialLedger`, `onCheckpoint`) and callback-before-checkpoint ordering
+- Service-level duplicate protection (`isAlreadySynced`) and checkpoint load/persist
 
 ## Adding New Contract Events
 

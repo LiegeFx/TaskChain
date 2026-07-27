@@ -23,7 +23,7 @@ import {
   escrowErrorToHttpStatus,
   type DisputeRaisedBy,
 } from '@/lib/escrow'
-import { activityService } from '@/lib/activity'
+import { dispatchNotification } from '@/lib/notifications'
 
 export const POST = withAuth(async (request: NextRequest, auth) => {
   let body: Record<string, unknown>
@@ -64,19 +64,18 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
       responseDeadline: body.responseDeadline as string | undefined,
     })
 
-    activityService.log({
-      actorId: userId,
-      contractId: result.contract.id,
-      disputeId: result.dispute.id,
-      milestoneId: result.dispute.milestoneId ?? undefined,
-      actionType: 'dispute_created',
-      description: `Dispute raised by ${raisedBy}: "${body.reason}"`,
-      metadata: {
-        raisedBy,
-        reason: body.reason,
-        desiredOutcome: body.desiredOutcome ?? null,
-      },
-    }).catch((err: unknown) => console.error('[activity] Failed to log dispute_created:', err))
+    // Notify every contract party except whoever raised the dispute
+    const parties = [result.contract.clientId, result.contract.freelancerId]
+      .filter((id) => id !== userId)
+    await Promise.all(
+      parties.map((partyId) =>
+        dispatchNotification(partyId, 'dispute_raised', {
+          disputeId: result.dispute.id,
+          contractId: result.contract.id,
+          reason: result.dispute.reason,
+        })
+      )
+    )
 
     return NextResponse.json(
       {

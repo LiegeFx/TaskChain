@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "worker": "tsx scripts/worker.ts",
     "sync-worker": "tsx scripts/sync-worker.ts",
+    "deadline-monitor": "tsx scripts/deadline-monitor.ts",
     "migrate": "tsx scripts/migrate.ts",
     "build:production": "npm run migrate && next build",
     "start:production": "next start"

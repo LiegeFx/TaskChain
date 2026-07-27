@@ -107,6 +107,44 @@ describe('SyncQueue', () => {
     expect(deadLetters[0].retryCount).toBeGreaterThanOrEqual(3)
   })
 
+  it('calls onRetry with the item and error message when a retry is scheduled', async () => {
+    const onRetry = vi.fn()
+    const retryQueue = new SyncQueue({ maxRetries: 3, concurrency: 2, pollIntervalMs: 100, onRetry })
+    retryQueue.setHandler(async () => {
+      throw new Error('transient failure')
+    })
+
+    retryQueue.enqueue(makePayload({ txHash: 'retry001' }))
+    retryQueue.start()
+    await vi.advanceTimersByTimeAsync(100)
+    retryQueue.stop()
+
+    expect(onRetry).toHaveBeenCalledTimes(1)
+    const [item, error] = onRetry.mock.calls[0]
+    expect(item.id).toBe('retry001:fund:0')
+    expect(item.retryCount).toBe(1)
+    expect(error).toBe('transient failure')
+  })
+
+  it('calls onDeadLetter once retries are exhausted, and does not call onRetry for that attempt', async () => {
+    const onRetry = vi.fn()
+    const onDeadLetter = vi.fn()
+    const dlQueue = new SyncQueue({ maxRetries: 1, concurrency: 2, pollIntervalMs: 100, onRetry, onDeadLetter })
+    dlQueue.setHandler(async () => {
+      throw new Error('fatal')
+    })
+
+    dlQueue.enqueue(makePayload({ txHash: 'dead002' }))
+    dlQueue.start()
+    await vi.advanceTimersByTimeAsync(100)
+    dlQueue.stop()
+
+    expect(onRetry).not.toHaveBeenCalled()
+    expect(onDeadLetter).toHaveBeenCalledTimes(1)
+    expect(onDeadLetter.mock.calls[0][0].id).toBe('dead002:fund:0')
+    expect(onDeadLetter.mock.calls[0][0].status).toBe('dead_letter')
+  })
+
   it('returns empty dead letters when all succeed', async () => {
     handler.mockResolvedValue(undefined)
 

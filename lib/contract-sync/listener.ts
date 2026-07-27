@@ -1,7 +1,8 @@
 import Server from '@stellar/stellar-sdk'
 import type { SorobanContractEvent, SorobanEventPayload } from './types'
 
-export type EventCallback = (payload: SorobanEventPayload) => void
+export type EventCallback = (payload: SorobanEventPayload) => void | Promise<void>
+export type CheckpointCallback = (ledgerSequence: number) => void
 
 export interface SorobanListenerOptions {
   rpcUrl: string
@@ -9,6 +10,15 @@ export interface SorobanListenerOptions {
   contractAddresses: string[]
   pollIntervalMs?: number
   maxLedgerOffset?: number
+  /**
+   * Ledger sequence to resume polling from (e.g. the last checkpoint
+   * persisted before a restart). When omitted, polling starts from the
+   * chain's current latest ledger, which means any events emitted while the
+   * listener was down are permanently skipped.
+   */
+  initialLedger?: number
+  /** Invoked after every successful poll with the new high-water-mark ledger. */
+  onCheckpoint?: CheckpointCallback
 }
 
 export class SorobanEventListener {
@@ -18,6 +28,7 @@ export class SorobanEventListener {
   private readonly pollIntervalMs: number
   private readonly maxLedgerOffset: number
   private callback: EventCallback | null = null
+  private readonly onCheckpoint: CheckpointCallback | null
   private timer: ReturnType<typeof setInterval> | null = null
   private lastLedger: number = 0
   private running = false
@@ -33,25 +44,45 @@ export class SorobanEventListener {
     this.contractAddresses = options.contractAddresses
     this.pollIntervalMs = options.pollIntervalMs ?? 10_000
     this.maxLedgerOffset = options.maxLedgerOffset ?? 100
+    this.onCheckpoint = options.onCheckpoint ?? null
+    if (options.initialLedger && options.initialLedger > 0) {
+      this.lastLedger = options.initialLedger
+    }
   }
 
   setCallback(cb: EventCallback): void {
     this.callback = cb
   }
 
+  /**
+   * Seeds the resume point before `start()` is called (e.g. from a
+   * checkpoint persisted by a previous run). No-op once the listener is
+   * already running.
+   */
+  setInitialLedger(ledgerSequence: number): void {
+    if (!this.running && ledgerSequence > 0) {
+      this.lastLedger = ledgerSequence
+    }
+  }
+
   async start(): Promise<void> {
     if (this.running) return
     this.running = true
 
-    try {
-      const info = await this.server.getLatestLedger()
-      this.lastLedger = info.sequence
-    } catch (err) {
-      console.warn('[SorobanListener] Could not get latest ledger, starting from 0')
+    // Only fall back to "start from now" when we have no persisted checkpoint
+    // to resume from — resuming from a checkpoint means events emitted while
+    // the listener was offline still get picked up on the first poll.
+    if (this.lastLedger === 0) {
+      try {
+        const info = await this.server.getLatestLedger()
+        this.lastLedger = info.sequence
+      } catch (err) {
+        console.warn('[SorobanListener] Could not get latest ledger, starting from 0')
+      }
     }
 
     this.timer = setInterval(() => this.poll(), this.pollIntervalMs)
-    console.log(`[SorobanListener] Started polling ${this.contractAddresses.length} contract(s) every ${this.pollIntervalMs}ms`)
+    console.log(`[SorobanListener] Started polling ${this.contractAddresses.length} contract(s) every ${this.pollIntervalMs}ms (resuming from ledger ${this.lastLedger})`)
   }
 
   stop(): void {
@@ -75,12 +106,14 @@ export class SorobanEventListener {
 
       if (this.lastLedger === 0) {
         this.lastLedger = latestSeq
+        this.onCheckpoint?.(latestSeq)
         return
       }
 
       const startSeq = Math.max(this.lastLedger + 1, latestSeq - this.maxLedgerOffset)
       if (startSeq >= latestSeq) {
         this.lastLedger = latestSeq
+        this.onCheckpoint?.(latestSeq)
         return
       }
 
@@ -89,6 +122,7 @@ export class SorobanEventListener {
       }
 
       this.lastLedger = latestSeq
+      this.onCheckpoint?.(latestSeq)
     } catch (err) {
       console.error('[SorobanListener] Poll error:', err)
     }
@@ -116,7 +150,10 @@ export class SorobanEventListener {
       for (const event of events.events) {
         const parsed = this.parseSorobanEvent(event, contractAddress)
         if (parsed) {
-          this.callback!(parsed)
+          // Awaited so the checkpoint only advances once the event is
+          // durably enqueued/logged — otherwise a crash between "advance
+          // checkpoint" and "persist event" would permanently drop it.
+          await this.callback!(parsed)
         }
       }
 
