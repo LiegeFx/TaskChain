@@ -26,6 +26,9 @@ yarn-error.log*
 .codex/
 .codex
 
+# file uploads (milestone deliverables)
+/uploads
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

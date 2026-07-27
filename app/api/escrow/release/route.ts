@@ -10,10 +10,11 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { withAuth } from '@/lib/auth/middleware'
+import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { escrowService, EscrowError, escrowErrorToHttpStatus } from '@/lib/escrow'
+import { dispatchNotification } from '@/lib/notifications'
 
-export const POST = withAuth(async (request: NextRequest, auth) => {
+export const POST = withRbac('escrow:release', async (request: NextRequest, auth: RbacContext) => {
   let body: Record<string, unknown>
   try {
     body = await request.json()
@@ -30,6 +31,24 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
       milestoneId: body.milestoneId as string,
       callerWalletAddress: auth.walletAddress,
     })
+
+    const amount = `${result.milestone.amount} ${result.milestone.currency}`
+    await Promise.all([
+      dispatchNotification(result.contract.clientId, 'funds_released', {
+        contractId: result.contract.id,
+        milestoneId: result.milestone.id,
+        milestoneName: result.milestone.title,
+        amount,
+        txHash: result.releaseTxHash,
+      }),
+      dispatchNotification(result.contract.freelancerId, 'payment_received', {
+        contractId: result.contract.id,
+        milestoneId: result.milestone.id,
+        milestoneName: result.milestone.title,
+        amount,
+        txHash: result.releaseTxHash,
+      }),
+    ])
 
     return NextResponse.json({
       milestoneId: result.milestone.id,

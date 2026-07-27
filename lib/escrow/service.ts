@@ -47,16 +47,33 @@ import {
 
 import { sorobanEscrowAdapter } from './blockchain'
 import { escrowRepository } from './repository'
+import {
+  executeCriticalOperation,
+  type CriticalOperationType,
+  initializeFailSafe,
+} from '@/lib/security/failSafe'
 
 // ---------------------------------------------------------------------------
 // Service class
 // ---------------------------------------------------------------------------
 
 export class EscrowService {
+  private failSafeInitialized = false
+
   constructor(
     private readonly blockchain: IEscrowBlockchainAdapter = sorobanEscrowAdapter,
     private readonly repo: IEscrowRepository = escrowRepository
   ) {}
+
+  /**
+   * Initialize fail-safe system (call this on application startup)
+   */
+  async initialize(): Promise<void> {
+    if (!this.failSafeInitialized) {
+      await initializeFailSafe()
+      this.failSafeInitialized = true
+    }
+  }
 
   // =========================================================================
   // createEscrow
@@ -169,33 +186,63 @@ export class EscrowService {
       throw new EscrowInvalidStateError('Contract has no escrow address — deploy first')
     }
 
-    // --- Verify on-chain ---
-    const verification = await this.blockchain.verifyFunding({
-      contractAddress: contract.escrowAddress,
-      txHash: input.fundingTxHash,
-      expectedAmount: input.amount,
-      currency: contract.currency,
-    })
-
-    if (!verification.verified) {
-      throw new EscrowFundingVerificationError(
-        `Funding verification failed: on-chain amount ${verification.onChainAmount} does not match expected ${input.amount}`
-      )
-    }
-
-    const now = new Date().toISOString()
-    const updated = await this.repo.updateContractEscrowStatus(
-      contract.id,
-      'funded',
+    // --- Execute with fail-safe ---
+    const { operation, result } = await executeCriticalOperation(
       {
-        fundedAt: now,
-        fundingTxHash: input.fundingTxHash,
-        status: 'active',
-        startedAt: now,
+        type: 'escrow_fund' as CriticalOperationType,
+        userId: parseInt(contract.clientId, 10),
+        walletAddress: input.callerWalletAddress,
+        resourceId: contract.id,
+        data: {
+          contractId: input.contractId,
+          fundingTxHash: input.fundingTxHash,
+          amount: input.amount,
+        },
+        amount: Number(input.amount),
+      },
+      async () => {
+        // --- Verify on-chain ---
+        if (!contract.escrowAddress) {
+          throw new EscrowInvalidStateError('Contract has no escrow address')
+        }
+        
+        const verification = await this.blockchain.verifyFunding({
+          contractAddress: contract.escrowAddress,
+          txHash: input.fundingTxHash,
+          expectedAmount: input.amount,
+          currency: contract.currency,
+        })
+
+        if (!verification.verified) {
+          throw new EscrowFundingVerificationError(
+            `Funding verification failed: on-chain amount ${verification.onChainAmount} does not match expected ${input.amount}`
+          )
+        }
+
+        const now = new Date().toISOString()
+        const updated = await this.repo.updateContractEscrowStatus(
+          contract.id,
+          'funded',
+          {
+            fundedAt: now,
+            fundingTxHash: input.fundingTxHash,
+            status: 'active',
+            startedAt: now,
+          }
+        )
+
+        return { contract: updated, fundedAt: now }
       }
     )
 
-    return { contract: updated, fundedAt: now }
+    // If operation requires approval, return pending status
+    if (operation.requiresApproval && operation.status === 'pending') {
+      throw new EscrowInvalidStateError(
+        'Operation requires admin approval. Please wait for approval before proceeding.'
+      )
+    }
+
+    return result
   }
 
   // =========================================================================
@@ -246,55 +293,85 @@ export class EscrowService {
       throw new EscrowInvalidStateError('Contract has no escrow address')
     }
 
-    // --- Resolve freelancer wallet ---
-    const freelancerWallet = await this.repo.getUserWalletAddress(contract.freelancerId)
-    if (!freelancerWallet) {
-      throw new EscrowValidationError('Freelancer wallet address not found')
-    }
+    // --- Execute with fail-safe ---
+    const { operation, result } = await executeCriticalOperation(
+      {
+        type: 'escrow_release' as CriticalOperationType,
+        userId: parseInt(contract.clientId, 10),
+        walletAddress: input.callerWalletAddress,
+        resourceId: milestone.id,
+        data: {
+          contractId: input.contractId,
+          milestoneId: input.milestoneId,
+          amount: milestone.amount,
+        },
+        amount: Number(milestone.amount),
+      },
+      async () => {
+        // --- Resolve freelancer wallet ---
+        const freelancerWallet = await this.repo.getUserWalletAddress(contract.freelancerId)
+        if (!freelancerWallet) {
+          throw new EscrowValidationError('Freelancer wallet address not found')
+        }
 
-    // --- Trigger on-chain release ---
-    let release: { txHash: string }
-    try {
-      release = await this.blockchain.releaseMilestoneFunds({
-        contractAddress: contract.escrowAddress,
-        milestoneId: milestone.id,
-        recipientAddress: freelancerWallet,
-        amount: milestone.amount,
-        currency: milestone.currency,
-      })
-    } catch (err) {
-      if (err instanceof EscrowBlockchainError) throw err
-      throw new EscrowBlockchainError('Failed to release milestone funds on-chain', err)
-    }
+        // --- Trigger on-chain release ---
+        if (!contract.escrowAddress) {
+          throw new EscrowInvalidStateError('Contract has no escrow address')
+        }
+        
+        let release: { txHash: string }
+        try {
+          release = await this.blockchain.releaseMilestoneFunds({
+            contractAddress: contract.escrowAddress,
+            milestoneId: milestone.id,
+            recipientAddress: freelancerWallet,
+            amount: milestone.amount,
+            currency: milestone.currency,
+          })
+        } catch (err) {
+          if (err instanceof EscrowBlockchainError) throw err
+          throw new EscrowBlockchainError('Failed to release milestone funds on-chain', err)
+        }
 
-    const now = new Date().toISOString()
+        const now = new Date().toISOString()
 
-    // --- Update milestone ---
-    const updatedMilestone = await this.repo.updateMilestoneStatus(
-      milestone.id,
-      'paid',
-      { releaseTxHash: release.txHash, paidAt: now }
+        // --- Update milestone ---
+        const updatedMilestone = await this.repo.updateMilestoneStatus(
+          milestone.id,
+          'paid',
+          { releaseTxHash: release.txHash, paidAt: now }
+        )
+
+        // --- Determine new escrow / contract status ---
+        const allMilestones = await this.repo.getMilestonesByContractId(contract.id)
+        const allPaid = allMilestones.every(
+          (m) => m.id === milestone.id ? true : m.status === 'paid'
+        )
+
+        const newEscrowStatus = allPaid ? 'fully_released' : 'partially_released'
+        const updatedContract = await this.repo.updateContractEscrowStatus(
+          contract.id,
+          newEscrowStatus,
+          allPaid ? { status: 'completed', completedAt: now } : undefined
+        )
+
+        return {
+          milestone: updatedMilestone,
+          contract: updatedContract,
+          releaseTxHash: release.txHash,
+          allMilestonesPaid: allPaid,
+        }
+      }
     )
 
-    // --- Determine new escrow / contract status ---
-    const allMilestones = await this.repo.getMilestonesByContractId(contract.id)
-    const allPaid = allMilestones.every(
-      (m) => m.id === milestone.id ? true : m.status === 'paid'
-    )
-
-    const newEscrowStatus = allPaid ? 'fully_released' : 'partially_released'
-    const updatedContract = await this.repo.updateContractEscrowStatus(
-      contract.id,
-      newEscrowStatus,
-      allPaid ? { status: 'completed', completedAt: now } : undefined
-    )
-
-    return {
-      milestone: updatedMilestone,
-      contract: updatedContract,
-      releaseTxHash: release.txHash,
-      allMilestonesPaid: allPaid,
+    // If operation requires approval, return pending status
+    if (operation.requiresApproval && operation.status === 'pending') {
+      throw new EscrowInvalidStateError(
+        'Operation requires admin approval. Please wait for approval before proceeding.'
+      )
     }
+
+    return result
   }
 
   // =========================================================================
@@ -337,38 +414,64 @@ export class EscrowService {
       throw new EscrowInvalidStateError('Contract has no escrow address')
     }
 
-    // --- Resolve client wallet ---
-    const clientWallet = await this.repo.getUserWalletAddress(contract.clientId)
-    if (!clientWallet) {
-      throw new EscrowValidationError('Client wallet address not found')
-    }
-
-    // --- Trigger on-chain refund ---
-    let refund: { txHash: string }
-    try {
-      refund = await this.blockchain.refundEscrow({
-        contractAddress: contract.escrowAddress,
-        clientAddress: clientWallet,
-        amount: contract.totalAmount,
-        currency: contract.currency,
-      })
-    } catch (err) {
-      if (err instanceof EscrowBlockchainError) throw err
-      throw new EscrowBlockchainError('Failed to refund escrow on-chain', err)
-    }
-
-    const now = new Date().toISOString()
-    const updatedContract = await this.repo.updateContractEscrowStatus(
-      contract.id,
-      'refunded',
+    // --- Execute with fail-safe ---
+    const { operation, result } = await executeCriticalOperation(
       {
-        status: 'cancelled',
-        cancelledAt: now,
-        cancellationReason: input.reason,
+        type: 'escrow_refund' as CriticalOperationType,
+        userId: parseInt(contract.clientId, 10),
+        walletAddress: input.callerWalletAddress,
+        resourceId: contract.id,
+        data: {
+          contractId: input.contractId,
+          reason: input.reason,
+          amount: contract.totalAmount,
+        },
+        amount: Number(contract.totalAmount),
+      },
+      async () => {
+        // --- Resolve client wallet ---
+        const clientWallet = await this.repo.getUserWalletAddress(contract.clientId)
+        if (!clientWallet) {
+          throw new EscrowValidationError('Client wallet address not found')
+        }
+
+        // --- Trigger on-chain refund ---
+        let refund: { txHash: string }
+        try {
+          refund = await this.blockchain.refundEscrow({
+            contractAddress: contract.escrowAddress,
+            clientAddress: clientWallet,
+            amount: contract.totalAmount,
+            currency: contract.currency,
+          })
+        } catch (err) {
+          if (err instanceof EscrowBlockchainError) throw err
+          throw new EscrowBlockchainError('Failed to refund escrow on-chain', err)
+        }
+
+        const now = new Date().toISOString()
+        const updatedContract = await this.repo.updateContractEscrowStatus(
+          contract.id,
+          'refunded',
+          {
+            status: 'cancelled',
+            cancelledAt: now,
+            cancellationReason: input.reason,
+          }
+        )
+
+        return { contract: updatedContract, refundTxHash: refund.txHash }
       }
     )
 
-    return { contract: updatedContract, refundTxHash: refund.txHash }
+    // If operation requires approval, return pending status
+    if (operation.requiresApproval && operation.status === 'pending') {
+      throw new EscrowInvalidStateError(
+        'Operation requires admin approval. Please wait for approval before proceeding.'
+      )
+    }
+
+    return result
   }
 
   // =========================================================================

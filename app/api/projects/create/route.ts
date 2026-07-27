@@ -3,7 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import { z } from 'zod'
-import { verifyAccessToken } from '@/lib/auth/session'
+import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 
 const MOCK_WALLET = 'GMOCKUSER1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ123456'
 
@@ -25,33 +25,13 @@ const bodySchema = z.object({
   milestones: z.array(milestoneSchema).min(1),
 })
 
-async function saveProject(walletAddress: string, body: z.infer<typeof bodySchema>) {
-  let rows = await sql<{ id: string }[]>`
-    SELECT id FROM users WHERE wallet_address = ${walletAddress} LIMIT 1
-  `
-  if (!rows.length) {
-    rows = await sql<{ id: string }[]>`
-      INSERT INTO users (wallet_address, username, email, role)
-      VALUES (
-        ${walletAddress},
-        ${'dev_' + walletAddress.slice(-8).toLowerCase()},
-        ${'dev_' + walletAddress.slice(-8).toLowerCase() + '@mock.local'},
-        'client'
-      )
-      ON CONFLICT (wallet_address) DO UPDATE SET wallet_address = EXCLUDED.wallet_address
-      RETURNING id
-    `
-  }
-
-  const clientId = rows[0]?.id
-  if (!clientId) throw new Error('Could not resolve user')
-
+async function saveProject(userId: string, body: z.infer<typeof bodySchema>) {
   const projectRows = await sql<{ id: string }[]>`
     INSERT INTO projects (
       client_id, title, description, category,
       budget_min, budget_max, currency, deadline, status
     ) VALUES (
-      ${clientId}, ${body.title}, ${body.description},
+      ${userId}, ${body.title}, ${body.description},
       ${body.category ?? null}, ${body.totalAmount}, ${body.totalAmount},
       ${body.currency}, ${body.deadline}, 'draft'
     )
@@ -76,25 +56,7 @@ async function saveProject(walletAddress: string, body: z.infer<typeof bodySchem
   return { projectId, title: body.title, milestonesCreated: body.milestones.length }
 }
 
-export async function POST(request: NextRequest): Promise<NextResponse> {
-  let walletAddress: string | null = null
-
-  const authHeader = request.headers.get('authorization')
-  const cookieToken = request.cookies.get('tc_access_token')?.value
-  const rawToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : cookieToken
-
-  if (rawToken) {
-    const payload = verifyAccessToken(rawToken)
-    if (payload) walletAddress = payload.walletAddress
-  }
-
-  if (!walletAddress) {
-    if (process.env.NODE_ENV === 'production') {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-    walletAddress = MOCK_WALLET
-  }
-
+export const POST = withRbac('project:create', async (request: NextRequest, auth: RbacContext): Promise<NextResponse> => {
   let raw: unknown
   try { raw = await request.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
@@ -106,9 +68,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const result = await saveProject(walletAddress, parsed.data)
+    const result = await saveProject(auth.userId, parsed.data)
     return NextResponse.json({ ...result, status: 'draft' }, { status: 201 })
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : 'Database error' }, { status: 500 })
   }
-}
+})

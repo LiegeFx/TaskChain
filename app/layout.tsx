@@ -1,9 +1,12 @@
 import React from "react"
 import type { Metadata } from 'next'
 import { Analytics } from '@vercel/analytics/next'
-import { Toaster } from 'sonner'
+
 import './globals.css'
 import { ThemeProvider } from "@/components/theme-provider" 
+import { Toaster } from "@/components/ui/sonner"
+import { StellarWalletProvider } from "@/components/wallet-provider"
+import { NetworkBanner } from "@/components/network-banner"
 
 export const metadata: Metadata = {
   title: 'TaskChain',
@@ -35,16 +38,19 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`font-sans antialiased`}>
+      <body className={`font-sans antialiased`} suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
-          {children}
-          <Toaster richColors position="top-right" />
-          <Analytics />
+          <StellarWalletProvider>
+            <NetworkBanner />
+            {children}
+            <Toaster expand closeButton />
+            <Analytics />
+          </StellarWalletProvider>
         </ThemeProvider>
       </body>
     </html>
