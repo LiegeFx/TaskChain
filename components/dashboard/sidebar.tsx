@@ -8,6 +8,7 @@ import {
   AlertCircle,
   LogOut,
   ChevronRight,
+  History,
   UserCircle,
   Settings,
 } from 'lucide-react'
@@ -34,6 +35,11 @@ const navItems = [
     label: 'Disputes',
     href: '/dashboard/disputes',
     icon: AlertCircle,
+  },
+  {
+    label: 'Transactions',
+    href: '/dashboard/transactions',
+    icon: History,
   },
   {
     label: 'Profile',
