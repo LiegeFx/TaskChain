@@ -54,6 +54,15 @@ export type NotificationKind = NotificationEventType | LegacyNotificationType
 export const NOTIFICATION_DEFAULT_LIMIT = 20
 export const NOTIFICATION_MAX_LIMIT = 100
 
+/**
+ * Upper bound on (page * limit). Caps the `OFFSET` clause Postgres has to
+ * scan inside `listNotificationsForUser`. The cap is generous — at the
+ * default limit of 20 it allows 5 k pages, which is 100 k rows (already a
+ * huge list). Posting past it throws NotificationError → 400 instead of
+ * silently letting a malicious query issue a big offset scan.
+ */
+export const NOTIFICATION_MAX_OFFSET = NOTIFICATION_MAX_LIMIT * 500
+
 export interface NotificationRow {
   id: number
   user_id: number
@@ -145,29 +154,25 @@ export function mapNotificationRow(row: NotificationRow): Notification {
 
 // ---------- Query parameter parsing & validation --------------------------
 
-function parseInteger(value: string | null, fallback: number): number {
-  if (value === null) return fallback
-  const parsed = Number.parseInt(value, 10)
-  return Number.isInteger(parsed) ? parsed : fallback
-}
-
 function parsePage(value: string | null): number {
-  const parsed = parseInteger(value, 1)
-  if (parsed < 1) {
+  if (value === null) return 1
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isInteger(parsed) || parsed < 1) {
     throw new NotificationError(
       'INVALID_PAGE',
-      'page must be greater than or equal to 1',
+      'page must be a positive integer',
     )
   }
   return parsed
 }
 
 function parseLimit(value: string | null): number {
-  const parsed = parseInteger(value, NOTIFICATION_DEFAULT_LIMIT)
-  if (parsed < 1) {
+  if (value === null) return NOTIFICATION_DEFAULT_LIMIT
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isInteger(parsed) || parsed < 1) {
     throw new NotificationError(
       'INVALID_LIMIT',
-      'limit must be greater than or equal to 1',
+      'limit must be a positive integer',
     )
   }
   return Math.min(parsed, NOTIFICATION_MAX_LIMIT)
@@ -284,6 +289,12 @@ export async function listNotificationsForUser(
   }
 
   const offset = (params.page - 1) * params.limit
+  if (offset > NOTIFICATION_MAX_OFFSET) {
+    throw new NotificationError(
+      'PAGE_TOO_LARGE',
+      `page * limit must not exceed ${NOTIFICATION_MAX_OFFSET}`,
+    )
+  }
   const typeFilter = params.type ?? null
   const unreadOnly = params.unreadOnly
 

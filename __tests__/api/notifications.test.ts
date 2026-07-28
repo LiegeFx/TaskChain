@@ -166,6 +166,37 @@ describe('parseNotificationQuery', () => {
     expect(() => parseNotificationQuery(new URLSearchParams('limit=0')))
       .toThrowError(NotificationError)
   })
+
+  it('rejects non-integer page/limit instead of silently defaulting', () => {
+    const pageErr = (() => {
+      try {
+        parseNotificationQuery(new URLSearchParams('page=banana'))
+        return null
+      } catch (e) {
+        return e
+      }
+    })()
+    expect(pageErr).toBeInstanceOf(NotificationError)
+    expect((pageErr as NotificationError).code).toBe('INVALID_PAGE')
+
+    const limitErr = (() => {
+      try {
+        parseNotificationQuery(new URLSearchParams('limit=banana'))
+        return null
+      } catch (e) {
+        return e
+      }
+    })()
+    expect(limitErr).toBeInstanceOf(NotificationError)
+    expect((limitErr as NotificationError).code).toBe('INVALID_LIMIT')
+  })
+
+  it('rejects empty page/limit strings', () => {
+    expect(() => parseNotificationQuery(new URLSearchParams('page=')))
+      .toThrowError(NotificationError)
+    expect(() => parseNotificationQuery(new URLSearchParams('limit=')))
+      .toThrowError(NotificationError)
+  })
 })
 
 describe('mapNotificationRow', () => {
@@ -291,6 +322,32 @@ describe('listNotificationsForUser', () => {
         unreadOnly: false,
       }),
     ).rejects.toBeInstanceOf(NotificationError)
+  })
+
+  it('rejects page/limit pairs whose offset exceeds the DoS cap', async () => {
+    // With page=502, limit=100: offset = (502 - 1) * 100 = 50_100 > 50_000 cap,
+    // so PAGE_TOO_LARGE is thrown before any SQL is issued.
+    await expect(
+      listNotificationsForUser(42, {
+        page: 502,
+        limit: 100,
+        type: null,
+        unreadOnly: false,
+      }),
+    ).rejects.toMatchObject({ code: 'PAGE_TOO_LARGE' })
+  })
+
+  it('accepts the post-cap boundary (page=501, limit=100, offset=50_000)', async () => {
+    // offset == cap -> allowed. The exact cap is inclusive (offset <= cap).
+    queueSql([buildNotificationRow({ id: 1, total_count: '1' })])
+    const result = await listNotificationsForUser(42, {
+      page: 501,
+      limit: 100,
+      type: null,
+      unreadOnly: false,
+    })
+    expect(result.totalItems).toBe(1)
+    expect(result.notifications).toHaveLength(1)
   })
 })
 
