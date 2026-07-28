@@ -8,7 +8,9 @@ import {
   AlertCircle,
   LogOut,
   ChevronRight,
+  History,
   UserCircle,
+  Settings,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -35,9 +37,19 @@ const navItems = [
     icon: AlertCircle,
   },
   {
+    label: 'Transactions',
+    href: '/dashboard/transactions',
+    icon: History,
+  },
+  {
     label: 'Profile',
     href: '/dashboard/profile',
     icon: UserCircle,
+  },
+  {
+    label: 'Settings',
+    href: '/settings',
+    icon: Settings,
   },
 ]
 

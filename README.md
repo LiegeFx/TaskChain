@@ -163,6 +163,13 @@ Future work may introduce an alternative CI/CD pipeline (e.g., a different provi
 
 See the Soroban escrow deployment guide for build and deploy steps, example CLI calls, and integration notes: [docs/soroban-escrow-deployment.md](docs/soroban-escrow-deployment.md)
 
+---
+
+## 📡 API Documentation
+
+- [Public Freelancer Profile API](docs/public-freelancer-profile-api.md) — unauthenticated endpoints for freelancer profiles, completed contracts, reviews, and reputation scores
+- [Reputation API](docs/reputation-api.md) — raw delivery metrics and how they are aggregated
+
 
 ## 📄 License
 

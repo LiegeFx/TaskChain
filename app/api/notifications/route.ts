@@ -1,94 +1,145 @@
-import { NextRequest, NextResponse } from 'next/server'
+export const dynamic = "force-dynamic";
 
+import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
+import { withAuth } from "@/lib/auth/middleware";
+import { enforceRateLimit, buildRateLimitKey } from "@/lib/security/rateLimit";
+import { getUserIdByWallet } from "@/lib/reputation";
 import {
-  NotificationError,
-  listNotificationsForUser,
-  parseNotificationQuery,
-} from '@/lib/notifications'
-import { sql } from '@/lib/db'
-import {
-  withAuth,
-  AuthContext,
-  resolveUserIdByWallet,
-} from '@/lib/auth/middleware'
+  listNotifications as listNotificationsDb,
+  countNotifications as countNotificationsDb,
+  markAllAsRead as markAllAsReadDb,
+} from "@/lib/notifications";
 
-export const dynamic = 'force-dynamic'
+// ─── Validation schemas ────────────────────────────────────────────────────
+
+const ListNotificationsSchema = z.object({
+  isRead: z.coerce.boolean().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+});
+
+// ─── GET /api/notifications ────────────────────────────────────────────────
 
 /**
- * GET /api/notifications
+ * GET /api/notifications?limit=20&offset=0&isRead=false
  *
- * List notifications for the authenticated user. Query parameters:
- *   page        1-based page number (default 1)
- *   limit       Page size, 1..100 (default 20)
- *   type        Optional filter on event_type (one of the canonical
- *               NOTIFICATION_EVENT_TYPES values)
- *   unreadOnly  true|false|1|0 (default false)
- *
- * Response shape:
- *   {
- *     data: Notification[],
- *     meta: {
- *       totalCount: number,
- *       page: number,
- *       limit: number,
- *       totalPages: number,
- *       unreadCount: number          // bonus: total unread for badge UI
- *     }
- *   }
- *
- * Status codes:
- *   200 ok
- *   400 NotificationError mapped to {error, code}
- *   401 missing/invalid auth token
- *   503 unexpected DB failure
+ * Returns a paginated list of notifications for the authenticated user.
+ * Query parameters:
+ *   - limit: max 100, default 20
+ *   - offset: pagination offset, default 0
+ *   - isRead: filter by read status (optional)
  */
-export const GET = withAuth(async (request: NextRequest, auth: AuthContext) => {
-  try {
-    const userId = await resolveUserIdByWallet(auth.walletAddress)
-    if (userId === null) {
-      return NextResponse.json(
-        { error: 'User not found', code: 'USER_NOT_FOUND' },
-        { status: 404 },
-      )
-    }
+export const GET = withAuth(async (request: NextRequest, auth) => {
+  const limited = await enforceRateLimit(request, {
+    key: buildRateLimitKey(request, "notifications:list", auth.walletAddress),
+    limit: 60,
+    windowMs: 60_000,
+  });
+  if (limited) return limited;
 
-    const params = parseNotificationQuery(request.nextUrl.searchParams)
-    const result = await listNotificationsForUser(userId, params)
-
-    // Bonus metadata: total unread count for the badge UI. Cheap because
-    // idx_notifications_user_unread already covers (user_id, is_read,
-    // created_at DESC).
-    const unreadRows = (await sql`
-      SELECT COUNT(*)::int AS unread
-      FROM notifications
-      WHERE user_id = ${userId} AND is_read = FALSE
-    `) as Array<{ unread: number }>
-    const unreadCount = Number(unreadRows[0]?.unread ?? 0)
-
-    return NextResponse.json({
-      data: result.notifications,
-      meta: {
-        totalCount: result.totalItems,
-        page: params.page,
-        limit: params.limit,
-        totalPages:
-          result.totalItems === 0
-            ? 0
-            : Math.max(1, Math.ceil(result.totalItems / params.limit)),
-        unreadCount,
-      },
-    })
-  } catch (error) {
-    if (error instanceof NotificationError) {
-      return NextResponse.json(
-        { error: error.message, code: error.code },
-        { status: 400 },
-      )
-    }
-    console.error('Failed to list notifications:', error)
+  const userId = await getUserIdByWallet(auth.walletAddress);
+  if (userId === null) {
     return NextResponse.json(
-      { error: 'Unable to load notifications', code: 'NOTIFICATIONS_LIST_FAILED' },
-      { status: 503 },
-    )
+      {
+        error: "Platform user not found for this wallet",
+        code: "USER_NOT_FOUND",
+      },
+      { status: 404 },
+    );
   }
-})
+
+  const { searchParams } = request.nextUrl;
+  const parsed = ListNotificationsSchema.safeParse({
+    isRead: searchParams.get("isRead") ?? undefined,
+    limit: searchParams.get("limit") ?? undefined,
+    offset: searchParams.get("offset") ?? undefined,
+  });
+
+  if (!parsed.success) {
+    return NextResponse.json(
+      {
+        error: "Validation failed",
+        details: parsed.error.flatten().fieldErrors,
+      },
+      { status: 422 },
+    );
+  }
+
+  try {
+    const notifications = await listNotificationsDb({
+      userId,
+      isRead: parsed.data.isRead,
+      limit: parsed.data.limit,
+      offset: parsed.data.offset,
+    });
+
+    const total = await countNotificationsDb(userId, parsed.data.isRead);
+
+    return NextResponse.json(
+      {
+        notifications,
+        pagination: {
+          total,
+          limit: parsed.data.limit ?? 20,
+          offset: parsed.data.offset ?? 0,
+          hasMore: (parsed.data.offset ?? 0) + notifications.length < total,
+        },
+      },
+      {
+        status: 200,
+        headers: { "Cache-Control": "private, no-store" },
+      },
+    );
+  } catch (err) {
+    console.error("[GET /api/notifications]", err);
+    return NextResponse.json(
+      { error: "Failed to fetch notifications" },
+      { status: 500 },
+    );
+  }
+});
+
+// ─── PATCH /api/notifications (mark all as read) ────────────────────────────
+
+/**
+ * PATCH /api/notifications
+ *
+ * Marks all unread notifications for the authenticated user as read.
+ */
+export const PATCH = withAuth(async (request: NextRequest, auth) => {
+  const limited = await enforceRateLimit(request, {
+    key: buildRateLimitKey(request, "notifications:update", auth.walletAddress),
+    limit: 30,
+    windowMs: 60_000,
+  });
+  if (limited) return limited;
+
+  const userId = await getUserIdByWallet(auth.walletAddress);
+  if (userId === null) {
+    return NextResponse.json(
+      {
+        error: "Platform user not found for this wallet",
+        code: "USER_NOT_FOUND",
+      },
+      { status: 404 },
+    );
+  }
+
+  try {
+    const updatedCount = await markAllAsReadDb(userId);
+    return NextResponse.json(
+      {
+        message: "All notifications marked as read",
+        updatedCount,
+      },
+      { status: 200 },
+    );
+  } catch (err) {
+    console.error("[PATCH /api/notifications]", err);
+    return NextResponse.json(
+      { error: "Failed to update notifications" },
+      { status: 500 },
+    );
+  }
+});

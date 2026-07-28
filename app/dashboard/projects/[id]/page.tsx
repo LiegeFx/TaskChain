@@ -16,6 +16,9 @@ import {
   EscrowStatusTracker,
   type EscrowStage,
 } from "@/components/dashboard/escrow-status-tracker";
+import { ReviewsList } from "@/components/ui/reviews-list";
+import { AverageScoreDisplay } from "@/components/ui/average-score-display";
+import { ReviewsSummary } from "@/components/ui/reviews-summary";
 
 interface Milestone {
   id: string;
@@ -317,6 +320,7 @@ export default function ProjectDetailPage() {
             
             <div className="flex items-center gap-4">
               {project.client?.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
                 <img 
                   src={project.client.avatar_url} 
                   alt={project.client.display_name || project.client.username} 
@@ -366,6 +370,7 @@ export default function ProjectDetailPage() {
               <>
                 <div className="flex items-center gap-4">
                   {project.freelancer.avatar_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img 
                       src={project.freelancer.avatar_url} 
                       alt={project.freelancer.display_name || project.freelancer.username} 
@@ -416,6 +421,45 @@ export default function ProjectDetailPage() {
             )}
           </Card>
         </div>
+
+        {/* Ratings & Reviews Summary */}
+        {project.freelancer && (
+          <div className="space-y-6">
+            <AverageScoreDisplay
+              reviews={[{
+                id: 0,
+                contractId: 0,
+                reviewerId: 0,
+                reviewerName: "Client",
+                freelancerId: parseInt(project.freelancer?.username?.replace('id-', '') || '0', 10),
+                freelancerName: project.freelancer.display_name || project.freelancer.username || "",
+                rating: project.freelancer.avg_rating || 0,
+                comment: "",
+                verified: true,
+                createdAt: new Date().toISOString(),
+              }]}
+              className="w-full"
+              showCount={true}
+              size="md"
+            />
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <ReviewsSummary
+                reviewCount={project.freelancer.total_reviews || 0}
+                averageRating={project.freelancer.avg_rating || 0}
+                verifiedCount={project.freelancer.total_reviews || 0}
+              />
+              
+              <Card className="p-5 bg-card/50 border-border/40 backdrop-blur-sm rounded-xl">
+                <h3 className="text-lg font-semibold text-foreground mb-4">Recent Reviews</h3>
+                <ReviewsList
+                  freelancerId={parseInt(project.freelancer?.username?.replace('id-', '') || '0', 10)}
+                  className="space-y-4"
+                />
+              </Card>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <Tabs defaultValue="milestones" className="w-full">
