@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useStellarWallet } from "@/components/wallet-provider";
 import { toast } from "sonner";
+import { buildPaymentTransaction, getNetworkPassphrase } from "@/lib/stellar/transaction-builder";
 
 interface EscrowFundingDialogProps {
   open: boolean;
@@ -160,17 +161,24 @@ export function EscrowFundingDialog({
     setError(null);
 
     try {
+      if (!address || !contractAddress) {
+        throw new Error("Wallet or contract address not available");
+      }
+
       // Import Freighter API dynamically
       const { signTransaction } = await import("@stellar/freighter-api");
 
-      // Build the payment transaction
-      // Note: In production, you'd use @stellar/stellar-sdk to build the proper transaction
-      // For this implementation, we'll simulate the transaction flow
+      // Build the payment transaction using the transaction builder
+      const networkPassphrase = getNetworkPassphrase(network as "TESTNET" | "PUBLIC");
       
-      const transactionXDR = "AAAAAgAAAAAB..."; // This would be the actual built transaction XDR
-      const networkPassphrase = network === "TESTNET" 
-        ? "Test SDF Network ; September 2015" 
-        : "Public Global Stellar Network ; September 2015";
+      const { xdr: transactionXDR } = buildPaymentTransaction({
+        fromAddress: address,
+        toAddress: contractAddress,
+        amount,
+        assetCode: currency === "XLM" ? "XLM" : currency,
+        networkPassphrase,
+        memo: `Fund escrow ${contractId}`,
+      });
 
       // Sign and submit transaction through Freighter
       const signedResult = await signTransaction(transactionXDR, { networkPassphrase });
@@ -180,8 +188,9 @@ export function EscrowFundingDialog({
       }
 
       // Submit the signed transaction to the network
-      // In production, you'd use SorobanRpc.Server to submit
-      const txHash = "mock-tx-hash-" + Date.now(); // Replace with actual transaction hash
+      // In production, you'd use SorobanRpc.Server to submit the transaction
+      // For now, we'll use a mock hash since we don't have the RPC server set up
+      const txHash = "mock-tx-hash-" + Date.now();
       
       setTransactionHash(txHash);
 
@@ -433,7 +442,7 @@ export function EscrowFundingDialog({
           <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4 shadow-lg max-w-sm">
             <div className="flex items-start gap-3">
               <CheckCircle2 className="h-5 w-5 text-green-600 dark:text-green-500 shrink-0 mt-0.5" />
-              <divclassname="flex-1 space-y-2">
+              <div className="flex-1 space-y-2">
                 <p className="font-medium text-green-600 dark:text-green-500">
                   Funding Successful!
                 </p>
@@ -449,7 +458,7 @@ export function EscrowFundingDialog({
                   View on Explorer
                   <ExternalLink className="h-3 w-3" />
                 </a>
-              </divclassname>
+              </div>
             </div>
           </div>
         </div>
