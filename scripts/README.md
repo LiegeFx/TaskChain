@@ -106,6 +106,7 @@ CONFIRM=true npx tsx scripts/deploy-mainnet.ts
 - `006-rate-limits.sql` - Rate limiting table
 - `009-reviews-schema.sql` - Reviews table for client/freelancer ratings
 - `010-freelancer-discovery-indexes.sql` - GIN/B-tree indexes that power GET /api/freelancers (task #121)
+- `011-notification-service.sql` - Enriches the `notifications` table for the notification service backend (task #122): `event_type` CHECK constraint, `payload JSONB`, `channel`, `delivered_at`, plus `(user_id, is_read, created_at)` and `(user_id, event_type, created_at)` indexes
 
 ### Security Tables
 - `007-fail-safe.sql` - Critical operations table for fail-safe system
