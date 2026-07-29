@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/auth/middleware'
 import { sql } from '@/lib/db'
 import { UpdateMilestoneSchema, IMMUTABLE_MILESTONE_STATUS_VALUES } from '@/lib/validations'
+import { activityService } from '@/lib/activity'
 
 export const PATCH = withAuth(async (request: NextRequest, auth) => {
   const id = request.nextUrl.pathname.split('/').at(-1)
@@ -64,6 +65,15 @@ export const PATCH = withAuth(async (request: NextRequest, auth) => {
       WHERE id = ${id}
       RETURNING *
     `
+
+    activityService.log({
+      actorId: user.id,
+      milestoneId: id,
+      projectId: milestone.project_id,
+      actionType: 'milestone_updated',
+      description: `Milestone "${updated.title}" updated`,
+      metadata: { previousTitle: milestone.title },
+    }).catch((err: unknown) => console.error('[activity] Failed to log milestone_updated:', err))
 
     return NextResponse.json({ milestone: updated })
   } catch {

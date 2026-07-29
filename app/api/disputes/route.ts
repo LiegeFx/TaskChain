@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { sql } from '@/lib/db'
 import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
+import { activityService } from '@/lib/activity'
 
 export const POST = withRbac('dispute:create', async (request: NextRequest, auth: RbacContext) => {
   try {
@@ -15,6 +16,15 @@ export const POST = withRbac('dispute:create', async (request: NextRequest, auth
     if (!job) return NextResponse.json({ error: 'Job not found', code: 'JOB_NOT_FOUND' }, { status: 404 })
     const [dispute] = await sql`INSERT INTO disputes (job_id, raised_by, reason) VALUES (${job.id}, ${auth.userId}, ${reason}) RETURNING *`
     await sql`UPDATE jobs SET status = 'disputed', updated_at = CURRENT_TIMESTAMP WHERE id = ${jobId}`
+
+    activityService.log({
+      actorId: auth.userId,
+      disputeId: dispute.id,
+      actionType: 'dispute_created',
+      description: `Dispute raised on job "${job.title}": "${reason}"`,
+      metadata: { jobId, reason },
+    }).catch((err: unknown) => console.error('[activity] Failed to log dispute_created:', err))
+
     return NextResponse.json(dispute, { status: 201 })
   } catch {
     return NextResponse.json({ error: 'Failed to raise dispute', code: 'DISPUTE_CREATION_FAILED' }, { status: 500 })

@@ -3,6 +3,7 @@ export const dynamic = 'force-dynamic'
 import { NextRequest, NextResponse } from 'next/server'
 import { withAnyRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
 import { sql } from '@/lib/db'
+import { activityService } from '@/lib/activity'
 
 // Only the contract client can approve (or reject) a submitted milestone
 export const POST = withAnyRbac(['milestone:approve', 'milestone:reject'], async (request: NextRequest, auth: RbacContext) => {
@@ -58,6 +59,17 @@ export const POST = withAnyRbac(['milestone:approve', 'milestone:reject'], async
       WHERE id = ${id}
       RETURNING *
     `
+
+    activityService.log({
+      actorId: auth.userId,
+      milestoneId: id,
+      contractId: milestone.contract_id,
+      actionType: action === 'approve' ? 'milestone_approved' : 'milestone_rejected',
+      description: action === 'approve'
+        ? `Milestone "${updated.title}" approved`
+        : `Milestone "${updated.title}" rejected: "${rejection_reason}"`,
+      metadata: { action, rejection_reason: rejection_reason ?? null },
+    }).catch((err: unknown) => console.error('[activity] Failed to log milestone approval:', err))
 
     return NextResponse.json({ milestone: updated })
   } catch {

@@ -37,6 +37,8 @@ export type Permission =
   | 'admin:users_manage'
   | 'admin:contracts_freeze'
   | 'admin:system_oversight'
+  // Activity log permissions
+  | 'activity:view'
   // General permissions
   | 'reputation:view'
   | 'reviews:create'
@@ -52,6 +54,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'contract:view',
     'dispute:create',
     'dispute:view',
+    'activity:view',
     'reputation:view',
     'reviews:create',
     'reviews:view',
@@ -73,6 +76,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'contract:update',
     'dispute:create',
     'dispute:view',
+    'activity:view',
     'reputation:view',
     'reviews:create',
     'reviews:view',
@@ -97,6 +101,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'dispute:create',
     'dispute:view',
     'dispute:resolve',
+    'activity:view',
     'admin:users_manage',
     'admin:contracts_freeze',
     'admin:system_oversight',

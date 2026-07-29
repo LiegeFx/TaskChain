@@ -12,6 +12,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { withRbac, RbacContext } from '@/lib/auth/rbacMiddleware'
+import { sql } from '@/lib/db'
 import { escrowService, EscrowError, escrowErrorToHttpStatus } from '@/lib/escrow'
 import { dispatchNotification } from '@/lib/notifications'
 

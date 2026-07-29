@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/auth/middleware'
 import { sql } from '@/lib/db'
 import { CreateMilestoneSchema } from '@/lib/validations'
+import { activityService } from '@/lib/activity'
 
 export const POST = withAuth(async (request: NextRequest, auth) => {
   let body: unknown
@@ -49,6 +50,15 @@ export const POST = withAuth(async (request: NextRequest, auth) => {
       )
       RETURNING *
     `
+
+    activityService.log({
+      actorId: user.id,
+      projectId: project_id,
+      milestoneId: milestone.id,
+      actionType: 'milestone_created',
+      description: `Milestone "${title}" created with amount ${amount} ${currency}`,
+      metadata: { amount, currency, sort_order },
+    }).catch((err: unknown) => console.error('[activity] Failed to log milestone_created:', err))
 
     return NextResponse.json({ milestone }, { status: 201 })
   } catch {
