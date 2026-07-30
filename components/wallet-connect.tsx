@@ -2,7 +2,8 @@
 
 import { Button } from "@/components/ui/button";
 import { Wallet, LogOut } from "lucide-react";
-import { useFreighter, truncateStellarAddress } from "@/lib/hooks/use-freighter";
+import { useFreighter } from "@/lib/hooks/use-freighter";
+import { WalletAddress } from "@/components/stellar";
 
 export function WalletConnect() {
   const {
@@ -49,9 +50,13 @@ export function WalletConnect() {
         {isWrongNetwork && (
           <span className="text-xs text-destructive">Wrong network ({network})</span>
         )}
-        <span className="text-sm text-muted-foreground font-mono">
-          {truncateStellarAddress(address)}
-        </span>
+        <WalletAddress
+          address={address}
+          network={network}
+          showCopy
+          showExplorerLink
+          size="sm"
+        />
         <Button variant="ghost" size="icon" onClick={disconnect} title="Disconnect Wallet">
           <LogOut className="h-4 w-4" />
         </Button>

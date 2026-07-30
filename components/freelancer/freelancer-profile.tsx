@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   Clock,
   Copy,
-  ExternalLink,
   Shield,
   Star,
   TrendingUp,
@@ -16,6 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import type { FreelancerReputationPayload } from '@/lib/reputation'
+import { WalletAddress } from '@/components/stellar'
 
 const MOCK_SKILLS = [
   'Next.js',
@@ -275,15 +275,13 @@ export function FreelancerProfile() {
                 )}
               </div>
               {walletAddress && (
-                <a
-                  href={`https://stellar.expert/explorer/public/account/${walletAddress}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-primary"
-                >
-                  <ExternalLink className="size-3" />
-                  View on Explorer
-                </a>
+                <WalletAddress
+                  address={walletAddress}
+                  network="PUBLIC"
+                  showCopy
+                  showExplorerLink
+                  size="sm"
+                />
               )}
             </div>
           </div>
