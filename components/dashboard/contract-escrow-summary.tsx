@@ -7,6 +7,8 @@ import {
   EscrowStatusTracker,
   type EscrowStage,
 } from "@/components/dashboard/escrow-status-tracker";
+import { ContractAddress, TransactionHash } from "@/components/stellar";
+import { networkFromPassphrase } from "@/lib/stellar/explorer";
 
 interface EscrowInfo {
   escrow_address: string | null;
@@ -31,6 +33,8 @@ export function ContractEscrowSummary({
 }) {
   const escrowStage: EscrowStage =
     (escrow?.escrow_status as EscrowStage | undefined) ?? "Funded";
+
+  const network = networkFromPassphrase(escrow?.network_passphrase);
 
   return (
     <div className="space-y-4">
@@ -61,7 +65,14 @@ export function ContractEscrowSummary({
               {escrow.escrow_address && (
                 <p className="text-xs text-muted-foreground font-mono mt-1 break-all flex items-center gap-1.5">
                   <Wallet className="h-3.5 w-3.5 shrink-0" />
-                  <span>Address: {escrow.escrow_address}</span>
+                  <span>Address: </span>
+                  <ContractAddress
+                    address={escrow.escrow_address}
+                    network={network}
+                    showCopy
+                    showExplorerLink
+                    size="sm"
+                  />
                 </p>
               )}
               {escrow.network_passphrase && (
@@ -96,8 +107,16 @@ export function ContractEscrowSummary({
           </div>
 
           {escrow.funding_tx_hash && (
-            <p className="text-[11px] text-muted-foreground font-mono truncate">
-              Funding Tx: <span className="text-foreground">{escrow.funding_tx_hash}</span>
+            <p className="text-[11px] text-muted-foreground font-mono flex items-center gap-1.5">
+              <span>Funding Tx:</span>
+              <TransactionHash
+                hash={escrow.funding_tx_hash}
+                network={network}
+                showCopy
+                showExplorerLink
+                truncateChars={8}
+                size="sm"
+              />
             </p>
           )}
 

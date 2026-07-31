@@ -8,6 +8,7 @@ import {
   getAddress,
   getNetwork,
 } from "@stellar/freighter-api";
+import { WalletAddress } from "@/components/stellar";
 
 type NetworkType = "PUBLIC" | "TESTNET" | "UNKNOWN";
 
@@ -61,11 +62,6 @@ export function WalletStatus() {
     return () => clearInterval(interval);
   }, [checkWalletStatus]);
 
-  const truncateAddress = (address: string): string => {
-    if (address.length <= 10) return address;
-    return `${address.slice(0, 5)}...${address.slice(-4)}`;
-  };
-
   const getNetworkBadgeVariant = (network: NetworkType) => {
     switch (network) {
       case "PUBLIC":
@@ -104,9 +100,13 @@ export function WalletStatus() {
     <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-background">
       <Wifi className="h-4 w-4 text-green-500" />
       <Wallet className="h-4 w-4 text-foreground" />
-      <span className="text-sm font-mono text-foreground">
-        {truncateAddress(walletState.publicKey)}
-      </span>
+      <WalletAddress
+        address={walletState.publicKey}
+        network={walletState.network}
+        showCopy
+        showExplorerLink
+        size="sm"
+      />
       <Badge variant={getNetworkBadgeVariant(walletState.network)}>
         {getNetworkLabel(walletState.network)}
       </Badge>
