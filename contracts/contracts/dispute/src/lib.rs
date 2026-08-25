@@ -67,6 +67,7 @@ impl DisputeContract {
 
     pub fn create_dispute(
         env: Env,
+        caller:Address,
         title: String,
         description: String,
         duration: u64,
@@ -74,7 +75,6 @@ impl DisputeContract {
         winner_address: Address,
         loser_address: Address,
     ) -> Result<u32, Error> {
-        let caller = env.caller();
         caller.require_auth();
 
         if !env.storage().instance().has(&DataKey::Token) {
