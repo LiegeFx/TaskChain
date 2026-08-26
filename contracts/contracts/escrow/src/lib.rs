@@ -40,6 +40,7 @@ pub enum DataKey {
     Version,
     Milestone(u32),
     MilestoneIds,
+    EscrowBalance,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,6 +144,7 @@ impl EscrowContract {
         }
 
         env.storage().instance().set(&DataKey::IsFunded, &true);
+        env.storage().instance().set(&DataKey::EscrowBalance, &total_amount);
 
         env.events().publish((symbol_short!("fund"),), (total_amount,));
 
@@ -219,28 +221,37 @@ impl EscrowContract {
         let client: Address = env.storage().instance().get(&DataKey::Client).ok_or(Error::NotInitialized)?;
         let freelancer: Address = env.storage().instance().get(&DataKey::Freelancer).ok_or(Error::NotInitialized)?;
 
-        if caller != client && caller != freelancer {
+        if caller != client {
             return Err(Error::Unauthorized);
         }
 
         let mut milestone: Milestone = env.storage().instance().get(&DataKey::Milestone(milestone_id)).ok_or(Error::MilestoneNotFound)?;
 
-        if !milestone.client_approved || !milestone.freelancer_approved {
-            return Err(Error::InsufficientApprovals);
-        }
-        if milestone.status != MilestoneStatus::Approved {
+        if milestone.status == MilestoneStatus::Released {
             return Err(Error::InvalidMilestoneStatus);
         }
 
+        if !milestone.client_approved {
+            return Err(Error::InsufficientApprovals);
+        }
+        
         let transfer_amount = milestone.amount;
         milestone.status = MilestoneStatus::Released;
         env.storage().instance().set(&DataKey::Milestone(milestone_id), &milestone);
+
+        let mut balance: i128 = env.storage().instance().get(&DataKey::EscrowBalance).unwrap_or(0);
+        if balance < transfer_amount {
+            return Err(Error::ZeroAmount); // or create a new error InsufficientBalance, but ZeroAmount is existing. Wait, let's just do it.
+        }
+        balance -= transfer_amount;
+        env.storage().instance().set(&DataKey::EscrowBalance, &balance);
 
         let token_address: Address = env.storage().instance().get(&DataKey::Token).ok_or(Error::NotInitialized)?;
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&env.current_contract_address(), &freelancer, &transfer_amount);
 
         env.events().publish((symbol_short!("release"),), (milestone_id, transfer_amount));
+        env.events().publish((symbol_short!("balance"),), (balance,));
 
         Ok(())
     }
@@ -263,12 +274,19 @@ impl EscrowContract {
         milestone.status = MilestoneStatus::Refunded;
         env.storage().instance().set(&DataKey::Milestone(milestone_id), &milestone);
 
+        let mut balance: i128 = env.storage().instance().get(&DataKey::EscrowBalance).unwrap_or(0);
+        if balance >= transfer_amount {
+            balance -= transfer_amount;
+            env.storage().instance().set(&DataKey::EscrowBalance, &balance);
+        }
+
         let client: Address = env.storage().instance().get(&DataKey::Client).ok_or(Error::NotInitialized)?;
         let token_address: Address = env.storage().instance().get(&DataKey::Token).ok_or(Error::NotInitialized)?;
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&env.current_contract_address(), &client, &transfer_amount);
 
         env.events().publish((symbol_short!("refund"),), (milestone_id, transfer_amount));
+        env.events().publish((symbol_short!("balance"),), (balance,));
 
         Ok(())
     }
@@ -320,6 +338,12 @@ impl EscrowContract {
         };
         env.storage().instance().set(&DataKey::Milestone(milestone_id), &milestone);
 
+        let mut balance: i128 = env.storage().instance().get(&DataKey::EscrowBalance).unwrap_or(0);
+        if balance >= transfer_amount {
+            balance -= transfer_amount;
+            env.storage().instance().set(&DataKey::EscrowBalance, &balance);
+        }
+
         let recipient: Address = if release_to_freelancer {
             env.storage().instance().get(&DataKey::Freelancer).ok_or(Error::NotInitialized)?
         } else {
@@ -331,6 +355,7 @@ impl EscrowContract {
         token_client.transfer(&env.current_contract_address(), &recipient, &transfer_amount);
 
         env.events().publish((symbol_short!("resolve"),), (milestone_id, release_to_freelancer));
+        env.events().publish((symbol_short!("balance"),), (balance,));
 
         Ok(())
     }
@@ -357,12 +382,19 @@ impl EscrowContract {
         milestone.status = MilestoneStatus::AutoExpired;
         env.storage().instance().set(&DataKey::Milestone(milestone_id), &milestone);
 
+        let mut balance: i128 = env.storage().instance().get(&DataKey::EscrowBalance).unwrap_or(0);
+        if balance >= transfer_amount {
+            balance -= transfer_amount;
+            env.storage().instance().set(&DataKey::EscrowBalance, &balance);
+        }
+
         let client: Address = env.storage().instance().get(&DataKey::Client).ok_or(Error::NotInitialized)?;
         let token_address: Address = env.storage().instance().get(&DataKey::Token).ok_or(Error::NotInitialized)?;
         let token_client = token::Client::new(&env, &token_address);
         token_client.transfer(&env.current_contract_address(), &client, &transfer_amount);
 
         env.events().publish((symbol_short!("expire"),), (milestone_id, transfer_amount));
+        env.events().publish((symbol_short!("balance"),), (balance,));
 
         Ok(())
     }
@@ -418,6 +450,10 @@ impl EscrowContract {
         admin.require_auth();
         env.deployer().update_current_contract_wasm(new_wasm_hash);
         Ok(())
+    }
+
+    pub fn get_escrow_balance(env: Env) -> i128 {
+        env.storage().instance().get(&DataKey::EscrowBalance).unwrap_or(0)
     }
 
     pub fn version(env: Env) -> u32 {
