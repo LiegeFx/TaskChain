@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getRecommendations } from "@/lib/recommendations";
+import { getRecommendations } from "@/lib/db";
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -10,12 +10,12 @@ export async function GET(req: NextRequest) {
   }
 
   const url = new URL(req.url);
-  const page = Math.max(1, parseInt(url.searchParams.get("page") == ? "1", 10) || 1);
+  const page = Math.max(1, parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
   const pageSize = Math.min(50, Math.max(1, parseInt(url.searchParams.get("pageSize") ?? "10", 10) || 10));
 
   try {
     const result = await getRecommendations({
-      freelancerId: session.user.id,
+      userId: session.user.id,
       page,
       pageSize,
     });

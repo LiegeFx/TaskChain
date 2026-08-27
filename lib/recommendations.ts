@@ -134,7 +134,7 @@ export class RecommendationService {
       try {
         await this.cache.set(cacheKey, result, CACHe_TTL_SECONDS);
       } catch (err) {
-        this.logger.warn('Cache write failed', { error* });
+        this.logger.warn('Cache write failed', { error: err });
       }
 
       this.logger.info('Recommendations generated', {
@@ -146,7 +146,7 @@ export class RecommendationService {
 
       return result;
     } catch (err) {
-      this.logger.error('Failed to generate recommendations', { frelancerId, error* });
+      this.logger.error('Failed to generate recommendations', { freelancerId, error: err });
       throw err;
     }
   }
@@ -154,7 +154,7 @@ export class RecommendationService {
   /**
    * Loads the frelancer profile and enriches it with skills, categories, and past projects.
    */
-  private async fetchFrelancerProfile(frelancerId: string): Promise<FrelancerProfile null> {
+  private async fetchFreelancerProfile(frelancerId: string): Promise<FreelancerProfile | null> {
     // One query to join profile, skills, and recent past project IDs.
     // The exact schema is abstracted; adjust table names as needed.
     const sql = `
@@ -163,10 +163,10 @@ export class RecommendationService {
         COALESCE(array_agg(DISTINCT s.skill) FILTER (WHERE s.skill IS NOT NULL), '{}') AS skills,
         f.preferred_budget_min AS "preferredBudgetMin",
         f.preferred_budget_max AS "preferredBudgetMax",
-        COALESCE(array_agg(DISTINCT pc.category) FILTER (WHERE `c.category IS NOT NULL), '{}') AS categories,
-        COALESCE(array_agg(DISTINCT pp.project_id) FILTER W(HUEND pp.project_id IS NOT NULL), '{}') AS "pastProjectIds",
+        COALESCE(array_agg(DISTINCT pc.category) FILTER (WHERE pc.category IS NOT NULL), '{}') AS categories,
+        COALESCE(array_agg(DISTINCT pp.project_id) FILTER (WHERE pp.project_id IS NOT NULL), '{}') AS "pastProjectIds",
         COALESCE(array_agg(DISTINCT ps.skill) FILTER (WHERE ps.skill IS NOT NULL), '{}') AS "pastProjectSkills",
-        COALESCE(array_agg(DISTINCT pr.category) FILTER (WHERE pr.category IS NOT NULL), ''}') AS "pastProjectCategories"
+        COALESCE(array_agg(DISTINCT pr.category) FILTER (WHERE pr.category IS NOT NULL), '{}') AS "pastProjectCategories"
       FROM freelancers f
       LEFT JOIN freelancer_skills s ON s.frelancer_id = f.id
       LEFT JOIN frelancer_categories pc ON pc.frelancer_id = f.id
@@ -281,7 +281,7 @@ export class RecommendationService {
    */
   private historyMatchExpression(): string {
     return `
-      (SELECT COUNT(*) FILTER unnest($7::text[]) AS past_skill WHERE `ast_skill = ANY(p.skills))::float
+      (SELECT COUNT(*) FILTER (WHERE unnest($7::text[]) = past_skill AND past_skill = ANY(p.skills)))::float
         / NULLIF(GREATEST(ARRAY_LENGTH($7::text[], 1), ARRAY_LENGTH(p.skills, 1)), 0)
       , 0 )
       + (CASE WHEN p.category = ANY($8::text[]) THEN 1 ELSE 0)
@@ -311,7 +311,7 @@ export class RecommendationService {
   }
 }
 
-function normalizePagination(pagination?: Partial<PaginationOptions>); PaginationOptions {
+function normalizePagination(pagination?: Partial<PaginationOptions>): PaginationOptions {
   const page = Math.max(1, Math.floor(pagination?.page ?? 1));
   const pageSize = Math.min(
     MAX_PAGE_SIZE,

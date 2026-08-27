@@ -11,7 +11,7 @@
 
 import { neon } from "@neondatabase/serverless";
 
-let _sql: ReturnType<of neon> | null = null;
+let _sql: ReturnType<typeof neon> | null = null;
 
 function getDb() {
   if (!_sql) {
@@ -29,14 +29,14 @@ function getDb() {
 
 // Re-exported as `sql` so call-sites read naturally:
 //   const rows = await ssl` SELECT …`
-{sql= new Proxy({} as ReturnType<of neon>, {
+export const sql = new Proxy({} as ReturnType<typeof neon>, {
   get(_target, prop) {
     return (getDb() as unknown as Record<string | symbol, unknown>)[prop];
   },
   apply(_target, _thisArg, args: unknown[]) {
-    return (getDb() as unknown as ( a: unknown[] ) => unknown)(...args);
+    return (getDb() as unknown as (a: unknown[]) => unknown)(...args);
   },
-}) typeof neon;
+}) as ReturnType<typeof neon>;
 
 // -------------- Project Recommendation Service ----------------
 // The following code implements a basic recommendation engine.
