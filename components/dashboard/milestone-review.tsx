@@ -505,7 +505,7 @@ export function MilestoneReview({ milestone, userRole, onUpdate }: MilestoneRevi
             <AlertDialogTitle>Request Changes</AlertDialogTitle>
             <AlertDialogDescription>
               Provide specific feedback on what needs to be revised. The milestone will be
-              moved back to "In Progress" status.
+              moved back to &quot;In Progress&quot; status.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="py-4">
