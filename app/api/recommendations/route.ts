@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { withAuth, resolveUserIdByWallet } from "@/lib/auth/middleware";
 import { getRecommendations } from "@/lib/db";
 
-export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+export const dynamic = 'force-dynamic';
+
+export const GET = withAuth(async (req: NextRequest, auth) => {
+  const userId = await resolveUserIdByWallet(auth.walletAddress);
+  if (!userId) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 });
   }
 
   const url = new URL(req.url);
@@ -15,7 +16,7 @@ export async function GET(req: NextRequest) {
 
   try {
     const result = await getRecommendations({
-      userId: session.user.id,
+      userId,
       page,
       pageSize,
     });
@@ -28,5 +29,4 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error("[recommendations]", error);
     return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
-  }
-}
+});
