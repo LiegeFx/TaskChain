@@ -99,6 +99,249 @@ export const NOTIFICATION_MAX_LIMIT = 100;
  */
 export const NOTIFICATION_MAX_OFFSET = NOTIFICATION_MAX_LIMIT * 500;
 
+// ─── Background Job Queue ──────────────────────────────────────────────────
+
+export type BackgroundJobType =
+  | "blockchain_transaction_monitoring"
+  | "notification_processing"
+  | "contract_synchronization"
+  | "deadline_check";
+
+export type BackgroundJobStatus =
+  | "queued"
+  | "processing"
+  | "completed"
+  | "failed";
+
+export interface BackgroundJob {
+  id: number;
+  type: BackgroundJobType | string;
+  status: BackgroundJobStatus;
+  payload: Record<string, unknown>;
+  attempts: number;
+  maxAttempts: number;
+  lastError: string | null;
+  runAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const backgroundJobHandlers = new Map<
+  string,
+  (job: BackgroundJob) => Promise<void>
+>();
+
+function mapBackgroundJobRow(row: Record<string, unknown>): BackgroundJob {
+  return {
+    id: row.id as number,
+    type: row.type as string,
+    status: row.status as BackgroundJobStatus,
+    payload: (row.payload as Record<string, unknown>) ?? {},
+    attempts: Number(row.attempts ?? 0),
+    maxAttempts: Number(row.max_attempts ?? 5),
+    lastError: row.last_error as string | null,
+    runAt:
+      row.run_at instanceof Date
+        ? row.run_at.toISOString()
+        : (row.run_at as string | null),
+    createdAt:
+      row.created_at instanceof Date
+        ? row.created_at.toISOString()
+        : (row.created_at as string),
+    updatedAt:
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : (row.updated_at as string),
+  };
+}
+
+export function registerBackgroundJobHandler(
+  type: string,
+  handler: (job: BackgroundJob) => Promise<void>,
+): void {
+  backgroundJobHandlers.set(type, handler);
+}
+
+export async function enqueueJob(input: {
+  type: BackgroundJobType | string;
+  payload: Record<string, unknown>;
+  idempotencyKey?: string;
+  maxAttempts?: number;
+  runAt?: Date | string;
+}): Promise<BackgroundJob> {
+  const maxAttempts =
+    input.maxAttempts ?? Number(process.env.JOB_MAX_ATTEMPTS ?? 5);
+  const runAt = input.runAt
+    ? new Date(input.runAt).toISOString()
+    : new Date().toISOString();
+  const idempotencyKey = input.idempotencyKey ?? null;
+
+  const rows = (await sql`
+    INSERT INTO background_jobs
+      (type, payload, status, idempotency_key, max_attempts, run_at)
+    VALUES
+      (${input.type}, ${JSON.stringify(input.payload ?? {})}, 'queued',
+       ${idempotencyKey}, ${maxAttempts}, ${runAt})
+    ON CONFLICT (idempotency_key) DO NOTHING
+    RETURNING *
+  `) as Record<string, unknown>[];
+
+  if (rows.length > 0) return mapBackgroundJobRow(rows[0]);
+
+  const existing = (await sql`
+    SELECT * FROM background_jobs
+    WHERE idempotency_key = ${idempotencyKey}
+    LIMIT 1
+  `) as Record<string, unknown>[];
+
+  if (existing.length === 0) {
+    throw new NotificationError(
+      "JOB_ENQUEUE_FAILED",
+      "Job insert did not return a row and no existing row was found",
+    );
+  }
+
+  return mapBackgroundJobRow(existing[0]);
+}
+
+export async function claimNextJob(
+  workerId = "default",
+): Promise<BackgroundJob | null> {
+  const rows = (await sql`
+    WITH candidate AS (
+      SELECT id
+      FROM background_jobs
+      WHERE status = 'queued'
+        AND run_at <= now()
+      ORDER BY run_at ASC, id ASC
+      LIMIT 1
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE background_jobs j
+    SET status = 'processing',
+        attempts = j.attempts + 1,
+        locked_at = now(),
+        locked_by = ${workerId},
+        updated_at = now()
+    FROM candidate
+    WHERE j.id = candidate.id
+    RETURNING j.*
+  `) as Record<string, unknown>[];
+
+  return rows.length > 0 ? mapBackgroundJobRow(rows[0]) : null;
+}
+
+export async function getJobStatus(
+  idOrKey: number | string,
+): Promise<BackgroundJob | null> {
+  const rows =
+    typeof idOrKey === "number"
+      ? ((await sql`
+          SELECT * FROM background_jobs
+          WHERE id = ${idOrKey}
+          LIMIT 1
+        `) as Record<string, unknown>[])
+      : ((await sql`
+          SELECT * FROM background_jobs
+          WHERE idempotency_key = ${idOrKey}
+          LIMIT 1
+        `) as Record<string, unknown>[]);
+
+  return rows.length > 0 ? mapBackgroundJobRow(rows[0]) : null;
+}
+
+export async function completeJob(jobId: number): Promise<BackgroundJob> {
+  const rows = (await sql`
+    UPDATE background_jobs
+    SET status = 'completed',
+        last_error = NULL,
+        updated_at = now()
+    WHERE id = ${jobId}
+      AND status = 'processing'
+    RETURNING *
+  `) as Record<string, unknown>[];
+
+  if (rows.length === 0) {
+    throw new NotificationError(
+      "JOB_COMPLETE_FAILED",
+      `Cannot complete job ${jobId}: not in processing state`,
+    );
+  }
+
+  return mapBackgroundJobRow(rows[0]);
+}
+
+function toErrorMessage(err: unknown): string {
+  if (err instanceof Error) {
+    return `${err.message}\n${err.stack ?? ""}`.trim();
+  }
+  return String(err);
+}
+
+export async function failJob(
+  jobId: number,
+  err: unknown,
+): Promise<BackgroundJob> {
+  const job = await getJobStatus(jobId);
+  if (!job) {
+    throw new NotificationError("JOB_NOT_FOUND", `Job ${jobId} not found`);
+  }
+
+  const errorMessage = toErrorMessage(err);
+  const shouldRetry = job.attempts < job.maxAttempts;
+  const backoffSeconds = shouldRetry
+    ? Math.min(Math.pow(2, job.attempts - 1), 3600)
+    : 0;
+  const nextRunAt = shouldRetry
+    ? new Date(Date.now() + backoffSeconds * 1000).toISOString()
+    : null;
+
+  const rows = (await sql`
+    UPDATE background_jobs
+    SET status = ${shouldRetry ? "queued" : "failed"},
+        run_at = CASE WHEN ${shouldRetry} THEN ${nextRunAt} ELSE run_at END,
+        last_error = ${errorMessage},
+        updated_at = now()
+    WHERE id = ${jobId}
+      AND status = 'processing'
+    RETURNING *
+  `) as Record<string, unknown>[];
+
+  if (rows.length === 0) {
+    throw new NotificationError(
+      "JOB_FAIL_UPDATE_FAILED",
+      `Cannot fail job ${jobId}: not in processing state`,
+    );
+  }
+
+  return mapBackgroundJobRow(rows[0]);
+}
+
+export async function processNextBackgroundJob(
+  workerId = "default",
+): Promise<BackgroundJob | null> {
+  const job = await claimNextJob(workerId);
+  if (!job) return null;
+
+  const handler = backgroundJobHandlers.get(job.type);
+  if (!handler) {
+    await failJob(
+      job.id,
+      new Error(`No background job handler registered for type: ${job.type}`),
+    );
+    return job;
+  }
+
+  try {
+    await handler(job);
+    await completeJob(job.id);
+  } catch (err) {
+    await failJob(job.id, err);
+  }
+
+  return job;
+}
+
 // ─── NotificationHub (singleton, in-process pub/sub) ───────────────────────
 
 type SubscriberCallback = (notification: Notification) => void;
