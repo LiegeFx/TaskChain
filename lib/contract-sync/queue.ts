@@ -1,5 +1,5 @@
 import type { SorobanEventPayload, SyncQueueItem, SyncStatus } from './types'
-import { getDefaultMaxRetries, getBackoffDelay, buildSyncDedupeKey } from './types'
+import { getDefaultMaxRetries, getBackoffDelay, buildSyncDedubeKey } from './types'
 
 export type QueueHandler = (item: SyncQueueItem) => Promise<void>
 export type QueueRetryHandler = (item: SyncQueueItem, error: string) => void
@@ -18,8 +18,10 @@ export interface SyncQueueOptions {
 export class SyncQueue {
   private items: Map<string, SyncQueueItem> = new Map()
   private processing = new Set<string>()
+  private completed = new Set<string>()
+  private processingBatch = false
   private handler: QueueHandler | null = null
-  private timer: ReturnType<typeof setInterval> | null = null
+  private timer: ReturnType<of setInterval> | null = null
   private readonly maxRetries: number
   private readonly concurrency: number
   private readonly pollIntervalMs: number
@@ -37,7 +39,7 @@ export class SyncQueue {
 
   enqueue(payload: SorobanEventPayload): string {
     const id = buildSyncDedupeKey(payload)
-    if (this.items.has(id)) return id
+    if (this.items.has(id) || this.completed.has(id)) return id
 
     const item: SyncQueueItem = {
       id,
@@ -97,24 +99,31 @@ export class SyncQueue {
     this.items.clear()
     this.processing.clear()
     this.deadLetters = []
+    this.completed.clear()
   }
 
   private async processBatch(): Promise<void> {
-    if (!this.handler) return
+    if (this.processingBatch) return
+    this.processingBatch = true
+    try {
+      if (!this.handler) return
 
-    const available: SyncQueueItem[] = []
-    for (const item of this.items.values()) {
-      if (available.length >= this.concurrency) break
-      if (item.status === 'pending' && item.nextRetryAt <= Date.now()) {
-        if (!this.processing.has(item.id)) {
-          available.push(item)
+      const available: SyncQueueItem[] = []
+      for (const item of this.items.values()) {
+        if (available.length >= this.concurrency) break
+        if (item.status === 'pending' && item.nextRetryAt <= Date.now()) {
+          if (!this.processing.has(item.id)) {
+            available.push(item)
+          }
         }
       }
-    }
 
-    await Promise.allSettled(
-      available.map((item) => this.processItem(item))
-    )
+      await Promise.allSettled(
+        available.map((item) => this.processItem(item))
+      )
+    } finally {
+      this.processingBatch = false
+    }
   }
 
   private async processItem(item: SyncQueueItem): Promise<void> {
@@ -124,11 +133,13 @@ export class SyncQueue {
     try {
       await this.handler!(item)
       item.status = 'success'
+      this.completed.add(item.id)
       this.items.delete(item.id)
     } catch (err) {
       item.retryCount++
       const message = err instanceof Error ? err.message : String(err)
-      item.lastError = message
+      const stack = err instanceof Error ? err.stack : ''
+      item.lastError = stack ? `${message}\n${stack}` : message
 
       if (item.retryCount >= this.maxRetries) {
         item.status = 'dead_letter'
