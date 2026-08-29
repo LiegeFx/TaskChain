@@ -1,6 +1,7 @@
 import { Server } from '@stellar/stellar-sdk'
 import { neon } from '@neondatabase/serverless'
 import * as dotenv from 'dotenv'
+import { Queue, Worker } from 'bullmq'
 
 dotenv.config()
 
@@ -13,6 +14,14 @@ const sql = neon(process.env.DATABASE_URL)
 const server = new Server(process.env.STELLAR_HORIZON_URL || 'https://horizon-testnet.stellar.org')
 
 const PLATFORM_ESCROW_ACCOUNT = process.env.ESCROW_ACCOUNT_ID || 'GBD2Z3PZ2L5KHTC4YQZKVH4A4XJ4Q5X6M7N8O9P0Q1R2S3T4U5V6W7X8'
+
+const redisConnection = {
+  host: process.env.REDIS_HOST || 'localhost',
+  port: Number(process.env.REDIS_PORT || 6379),
+  password: process.env.REDIS_PASSWORD || undefined,
+}
+
+const paymentQueue = new Queue('payment-processing', { connection: redisConnection })
 
 async function createNotification(userId: number, title: string, message: string, type: string = 'info') {
   try {
@@ -228,7 +237,22 @@ async function startWorker() {
     .stream({
       onmessage: async (paymentRecord: any) => {
         if (paymentRecord.type === 'payment') {
-          await processPayment(paymentRecord)
+          const txHash = paymentRecord.transaction_hash
+          if (!txHash) {
+            console.error('[WORKER ERROR] Payment record missing transaction_hash, cannot enqueue job')
+            return
+          }
+          try {
+            await paymentQueue.add('process-payment', paymentRecord, {
+              jobId: txHash,
+              attempts: 5,
+              backoff: { type: 'exponential', delay: 1000 },
+              removeOnComplete: true,
+              removeOnFail: false
+            })
+          } catch (error) {
+            console.error(`[WORKER ERROR] Failed to enqueue payment for tx ${txHash}:`, error)
+          }
         }
       },
       onerror: (error: any) => {
@@ -236,7 +260,36 @@ async function startWorker() {
         // Streaming usually tries to reconnect automatically, but we log it.
       }
     })
-    
+
+  // Payment processing worker
+  const paymentWorker = new Worker('payment-processing', async job => {
+    try {
+      const paymentRecord = job.data
+      // Restore transaction method if it was lost during serialization
+      if (typeof paymentRecord.transaction !== 'function') {
+        const tx = await server.transactions().transaction(paymentRecord.transaction_hash)
+        paymentRecord.transaction = async () => tx
+      }
+      console.log(`[WORKER] Processing payment job ${job.id} (tx: ${paymentRecord.transaction_hash})`)
+      await processPayment(paymentRecord)
+      console.log(`[WORKER] Payment job ${job.id} completed successfully`)
+    } catch (error) {
+      console.error(`[WORKER ERROR] Payment job ${job.id} failed:`, error)
+      throw error
+    }
+  }, {
+    connection: redisConnection,
+    concurrency: 5
+  })
+
+  paymentWorker.on('failed', (job, err) => {
+    console.error(`[WORKER] Job ${job?.id} failed after ${job?.attemptsMade} attempts: ${err.message}`)
+  })
+
+  paymentWorker.on('completed', job => {
+    console.log(`[WORKER] Job ${job.id} completed`)
+  })
+
   // Heartbeat
   setInterval(() => {
     console.log(`[WORKER HEARTBEAT] ${new Date().toISOString()} - Monitoring ${PLATFORM_ESCROW_ACCOUNT}...`)
